@@ -10,18 +10,33 @@ import (
 	"github.com/fhs/gompd/mpd"
 )
 
-func getStatus(c *mpd.Client) (string, string) {
+type playingStatus struct {
+	Track    string
+	Duration string
+	Elapsed  string
+}
+
+func getStatus(c *mpd.Client) playingStatus {
 	status, err := c.Status()
 	check(err, "status")
 	if status["state"] == "pause" {
-		return "paused"
+		s := playingStatus{
+			Track:    "paused",
+			Duration: status["duration"],
+			Elapsed:  status["elapsed"]}
+		return s
 	} else if status["state"] == "play" {
 		song, err := c.CurrentSong()
 		check(err, "current song")
-		return song["Title"] + " by " + song["Artist"], status["duration"]
+		s := playingStatus{
+			Track:    song["Title"] + " by " + song["Artist"],
+			Duration: status["duration"],
+			Elapsed:  status["elapsed"]}
+		return s
 	}
 	// mpd is not playing
-	return "Nothing", "Nothing"
+	n := playingStatus{"", "", ""}
+	return n
 }
 
 func keepAlive(c *mpd.Client) {
@@ -32,8 +47,8 @@ func keepAlive(c *mpd.Client) {
 	}()
 }
 
-func checkDuration(dur string) {
-	totalSeconds, err := strconv.ParseFloat(dur, 64)
+func checkDuration(s playingStatus) {
+	totalSeconds, err := strconv.ParseFloat(s.Duration, 64)
 	check(err, "totalSeconds")
 
 	halftotal := int(math.Floor(totalSeconds / 2))
@@ -41,11 +56,11 @@ func checkDuration(dur string) {
 	go func() {
 		time.Sleep(time.Duration(halftotal) * time.Second)
 
-		elapsedSeconds, err := strconv.ParseFloat(status["elapsed"], 64)
+		elapsedSeconds, err := strconv.ParseFloat(s.Elapsed, 64)
 		check(err, "eseconds")
 
 		if int(math.Floor(elapsedSeconds)) >= halftotal {
-			fmt.Println(fmt.Sprintf("played over half: %s - %s", song["Artist"], song["Title"]))
+			fmt.Println("played over half: ", s.Track)
 		}
 	}()
 }
@@ -66,9 +81,9 @@ func main() {
 
 	// get initial track's status
 	go func() {
-		it, dur := getStatus(c)
-		fmt.Println("Current track:", it)
-		currentTrack <- it
+		is := getStatus(c)
+		fmt.Println("Current track:", is.Track)
+		currentTrack <- is.Track
 	}()
 
 	// Log events.
@@ -79,17 +94,17 @@ func main() {
 				t := <-currentTrack
 
 				// Connect to mpd to get the current track
-				ct, dur := getStatus(c)
+				s := getStatus(c)
 				// check against old one
-				if ct != t {
+				if s.Track != t {
 					// if it's not the same, restart the timer
-					fmt.Println("Track changed:", ct)
+					fmt.Println("Track changed:", s.Track)
 				} else {
 					// if it's the same, keep the timer running
 					fmt.Println("Nothing changed")
 				}
 				go func() {
-					currentTrack <- ct
+					currentTrack <- s.Track
 				}()
 			}()
 		}
