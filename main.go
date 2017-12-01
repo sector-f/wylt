@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
+	"strconv"
+	"time"
 
 	"github.com/fhs/gompd/mpd"
 )
 
-func getStatus(c *mpd.Client) string {
+func getStatus(c *mpd.Client) (string, string) {
 	status, err := c.Status()
 	check(err, "status")
 	if status["state"] == "pause" {
@@ -15,10 +18,36 @@ func getStatus(c *mpd.Client) string {
 	} else if status["state"] == "play" {
 		song, err := c.CurrentSong()
 		check(err, "current song")
-		return song["Title"] + " by " + song["Artist"]
+		return song["Title"] + " by " + song["Artist"], status["duration"]
 	}
 	// mpd is not playing
-	return "Nothing"
+	return "Nothing", "Nothing"
+}
+
+func keepAlive(c *mpd.Client) {
+	go func() {
+		c.Ping()
+		time.Sleep(30 * time.Second)
+		keepAlive(c)
+	}()
+}
+
+func checkDuration(dur string) {
+	totalSeconds, err := strconv.ParseFloat(dur, 64)
+	check(err, "totalSeconds")
+
+	halftotal := int(math.Floor(totalSeconds / 2))
+
+	go func() {
+		time.Sleep(time.Duration(halftotal) * time.Second)
+
+		elapsedSeconds, err := strconv.ParseFloat(status["elapsed"], 64)
+		check(err, "eseconds")
+
+		if int(math.Floor(elapsedSeconds)) >= halftotal {
+			fmt.Println(fmt.Sprintf("played over half: %s - %s", song["Artist"], song["Title"]))
+		}
+	}()
 }
 
 func main() {
@@ -26,16 +55,18 @@ func main() {
 	w, err := mpd.NewWatcher("tcp", "127.0.0.1:6600", "")
 	check(err, "watcher")
 	defer w.Close()
+	// Connect to mpd as a client.
+	c, err := mpd.Dial("tcp", "127.0.0.1:6600")
+	check(err, "dial")
+	keepAlive(c)
+	defer c.Close()
 
 	// Create channel that will keep track of the current playing track.
 	currentTrack := make(chan string)
-	// Connect to mpd as a client.
+
+	// get initial track's status
 	go func() {
-		c, err := mpd.Dial("tcp", "127.0.0.1:6600")
-		check(err, "dial")
-		// get initial track
-		it := getStatus(c)
-		c.Close()
+		it, dur := getStatus(c)
 		fmt.Println("Current track:", it)
 		currentTrack <- it
 	}()
@@ -48,17 +79,14 @@ func main() {
 				t := <-currentTrack
 
 				// Connect to mpd to get the current track
-				c, err := mpd.Dial("tcp", "127.0.0.1:6600")
-				check(err, "dial")
-				ct := getStatus(c)
-				c.Close()
+				ct, dur := getStatus(c)
 				// check against old one
-				if ct == t {
+				if ct != t {
+					// if it's not the same, restart the timer
+					fmt.Println("Track changed:", ct)
+				} else {
 					// if it's the same, keep the timer running
 					fmt.Println("Nothing changed")
-				} else {
-					// if its the same, restart the timer
-					fmt.Println("Track changed:", ct)
 				}
 				go func() {
 					currentTrack <- ct
