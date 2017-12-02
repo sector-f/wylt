@@ -20,28 +20,29 @@ func getStatus(c *mpd.Client) playingStatus {
 	status, err := c.Status()
 	check(err, "status")
 	if status["state"] == "pause" {
-		s := playingStatus{
+		return playingStatus{
 			Track:    "paused",
 			Duration: status["duration"],
 			Elapsed:  status["elapsed"]}
-		return s
 	} else if status["state"] == "play" {
 		song, err := c.CurrentSong()
 		check(err, "current song")
-		s := playingStatus{
+		return playingStatus{
 			Track:    song["Title"] + " by " + song["Artist"],
 			Duration: status["duration"],
 			Elapsed:  status["elapsed"]}
-		return s
 	}
 	// mpd is not playing
-	n := playingStatus{"", "", ""}
-	return n
+	return playingStatus{
+		Track:    "Nothing",
+		Duration: "Nothing",
+		Elapsed:  "Nothing"}
 }
 
 func keepAlive(c *mpd.Client) {
 	go func() {
-		c.Ping()
+		err := c.Ping()
+		check(err, "ping")
 		time.Sleep(30 * time.Second)
 		keepAlive(c)
 	}()
@@ -66,15 +67,14 @@ func checkDuration(s playingStatus) {
 }
 
 func main() {
+	address := "192.168.1.100:6600"
 	// Connect to mpd and create a watcher for its events.
-	w, err := mpd.NewWatcher("tcp", "127.0.0.1:6600", "")
+	w, err := mpd.NewWatcher("tcp", address, "")
 	check(err, "watcher")
-	defer w.Close()
 	// Connect to mpd as a client.
-	c, err := mpd.Dial("tcp", "127.0.0.1:6600")
+	c, err := mpd.Dial("tcp", address)
 	check(err, "dial")
 	keepAlive(c)
-	defer c.Close()
 
 	// Create channel that will keep track of the current playing track.
 	currentTrack := make(chan string)
@@ -115,6 +115,12 @@ func main() {
 			log.Println("Error:", err)
 		}
 	}()
+
+	// Clean everything up.
+	err = w.Close()
+	check(err, "watcher close")
+	err = c.Close()
+	check(err, "client close")
 }
 
 func check(e error, where string) {
