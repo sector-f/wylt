@@ -48,26 +48,19 @@ func keepAlive(c *mpd.Client) {
 	}()
 }
 
-func checkDuration(s playingStatus) {
-	totalSeconds, err := strconv.ParseFloat(s.Duration, 64)
-	check(err, "totalSeconds")
+func parseDuration(s playingStatus) (time.Duration, time.Duration) {
+	totalLength, err := strconv.ParseFloat(s.Duration, 64)
+	check(err, "totalLength")
 
-	halftotal := int(math.Floor(totalSeconds / 2))
+	tl := time.Duration(int(totalLength)) * time.Second
 
-	go func() {
-		time.Sleep(time.Duration(halftotal) * time.Second)
+	hl := time.Duration(int(math.Floor(totalLength/2))) * time.Second
 
-		elapsedSeconds, err := strconv.ParseFloat(s.Elapsed, 64)
-		check(err, "eseconds")
-
-		if int(math.Floor(elapsedSeconds)) >= halftotal {
-			fmt.Println("played over half: ", s.Track)
-		}
-	}()
+	return tl, hl
 }
 
 func main() {
-	address := "192.168.1.100:6600"
+	address := "127.0.0.1:6600"
 	// Connect to mpd and create a watcher for its events.
 	w, err := mpd.NewWatcher("tcp", address, "")
 	check(err, "watcher")
@@ -97,11 +90,12 @@ func main() {
 				s := getStatus(c)
 				// check against old one
 				if s.Track != t {
-					// if it's not the same, restart the timer
+					// if it's not the same, start a timer
 					fmt.Println("Track changed:", s.Track)
-				} else {
-					// if it's the same, keep the timer running
-					fmt.Println("Nothing changed")
+					_, hl := parseDuration(s)
+					time.AfterFunc(hl, func() {
+						fmt.Println("done!", s.Track)
+					})
 				}
 				go func() {
 					currentTrack <- s.Track
