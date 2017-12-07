@@ -48,19 +48,18 @@ func keepAlive(c *mpd.Client) {
 	}()
 }
 
-func parseDuration(s playingStatus) (time.Duration, time.Duration) {
-	totalLength, err := strconv.ParseFloat(s.Duration, 64)
-	check(err, "totalLength")
+func getHalfPoint(s playingStatus) (time.Duration, error) {
+	if s.Duration != Nothing {
+		totalLength, err := strconv.ParseFloat(s.Duration, 64)
+		check(err, "totalLength")
 
-	tl := time.Duration(int(totalLength)) * time.Second
-
-	hl := time.Duration(int(math.Floor(totalLength/2))) * time.Second
-
-	return tl, hl
+		return time.Duration(int(math.Floor(totalLength/2))) * time.Second, nil
+	}
+	return nil, "Nothing is playing right now."
 }
 
 func main() {
-	address := "127.0.0.1:6600"
+	address := "192.168.1.100:6600"
 	// Connect to mpd and create a watcher for its events.
 	w, err := mpd.NewWatcher("tcp", address, "")
 	check(err, "watcher")
@@ -71,6 +70,7 @@ func main() {
 
 	// Create channel that will keep track of the current playing track.
 	currentTrack := make(chan string)
+	// Create channel that will keep track of whether a timer is running or not.
 
 	// get initial track's status
 	go func() {
@@ -79,21 +79,19 @@ func main() {
 		currentTrack <- is.Track
 	}()
 
-	// Log events.
+	// Watch for track changes.
 	for subsystem := range w.Event {
 		if subsystem == "player" {
 			go func() {
 				// get old track
 				t := <-currentTrack
-
 				// Connect to mpd to get the current track
 				s := getStatus(c)
 				// check against old one
 				if s.Track != t {
 					// if it's not the same, start a timer
 					fmt.Println("Track changed:", s.Track)
-					_, hl := parseDuration(s)
-					time.AfterFunc(hl, func() {
+					time.AfterFunc(getHalfPoint(s), func() {
 						fmt.Println("done!", s.Track)
 					})
 				}
