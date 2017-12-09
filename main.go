@@ -48,14 +48,13 @@ func keepAlive(c *mpd.Client) {
 	}()
 }
 
-func getHalfPoint(s playingStatus) (time.Duration, error) {
-	if s.Duration != Nothing {
+func getHalfPoint(s playingStatus) int {
+	if s.Duration != "Nothing" {
 		totalLength, err := strconv.ParseFloat(s.Duration, 64)
 		check(err, "totalLength")
-
-		return time.Duration(int(math.Floor(totalLength/2))) * time.Second, nil
+		return int(math.Floor(totalLength / 2))
 	}
-	return nil, "Nothing is playing right now."
+	return -1
 }
 
 func main() {
@@ -87,13 +86,18 @@ func main() {
 				t := <-currentTrack
 				// Connect to mpd to get the current track
 				s := getStatus(c)
-				// check against old one
-				if s.Track != t {
-					// if it's not the same, start a timer
-					fmt.Println("Track changed:", s.Track)
-					time.AfterFunc(getHalfPoint(s), func() {
-						fmt.Println("done!", s.Track)
-					})
+				hp := getHalfPoint(s)
+				if hp != -1 {
+					// check against old one
+					if s.Track != t {
+						// if it's not the same, start a timer
+						fmt.Println("Track changed:", s.Track)
+						time.AfterFunc(time.Duration(hp)*time.Second, func() {
+							fmt.Println("half point reached!", s.Track)
+						})
+					}
+				} else {
+					fmt.Println("Playlist cleared.")
 				}
 				go func() {
 					currentTrack <- s.Track
@@ -117,6 +121,6 @@ func main() {
 
 func check(e error, where string) {
 	if e != nil {
-		log.Fatalln("error here: ", where, e)
+		log.Println("error here: ", where, e)
 	}
 }
