@@ -51,6 +51,7 @@ func keepAlive(c *mpd.Client) {
 func getHalfPoint(s playingStatus) int {
 	if s.Duration != "Nothing" {
 		totalLength, err := strconv.ParseFloat(s.Duration, 64)
+
 		check(err, "totalLength")
 		return int(math.Floor(totalLength / 2))
 	}
@@ -89,7 +90,7 @@ func main() {
 				hp := getHalfPoint(s)
 				if hp != -1 {
 					// check against old one
-					if s.Track != t {
+					if s.Track != t && s.Track != "paused" {
 						// if it's not the same, start a timer
 						fmt.Println("Track changed:", s.Track)
 						time.AfterFunc(time.Duration(hp)*time.Second, func() {
