@@ -70,7 +70,6 @@ func main() {
 
 	// Create channel that will keep track of the current playing track.
 	currentTrack := make(chan string)
-	// Create channel that will keep track of whether a timer is running or not.
 
 	// get initial track's status
 	go func() {
@@ -84,25 +83,26 @@ func main() {
 		if subsystem == "player" {
 			go func() {
 				// get old track
-				t := <-currentTrack
+				oldTrack := <-currentTrack
 				// Connect to mpd to get the current track
 				s := getStatus(c)
 				hp := getHalfPoint(s)
+				// add new track
+				go func() {
+					currentTrack <- s.Track
+					fmt.Println("updating track...")
+				}()
+				// if there is a halfpoint
 				if hp != -1 {
-					// check against old one
-					if s.Track != t && s.Track != "paused" {
-						// if it's not the same, start a timer
-						fmt.Println("Track changed:", s.Track)
-						time.AfterFunc(time.Duration(hp)*time.Second, func() {
-							fmt.Println("half point reached!", s.Track)
-						})
-					}
+					fmt.Println("Current track:", s.Track)
+					time.AfterFunc(time.Duration(hp)*time.Second, func() {
+						if s.Track == oldTrack {
+							fmt.Println("API called!", s.Track)
+						}
+					})
 				} else {
 					fmt.Println("Playlist cleared.")
 				}
-				go func() {
-					currentTrack <- s.Track
-				}()
 			}()
 		}
 	}
