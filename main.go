@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"math"
 	"strconv"
@@ -11,13 +10,18 @@ import (
 	"github.com/fhs/gompd/mpd"
 )
 
+// struct for what we use
 type playingStatus struct {
 	Track    string
+	Title    string
+	Artist   string
+	Album    string
 	Duration string
 	Elapsed  string
 	Status   string
 }
 
+// parse the status and return useful info
 func getStatus(c *mpd.Client) (playingStatus, error) {
 	status, err := c.Status()
 	check(err, "status")
@@ -26,27 +30,60 @@ func getStatus(c *mpd.Client) (playingStatus, error) {
 		check(err, "current song")
 		return playingStatus{
 			Track:    song["Title"] + " by " + song["Artist"],
+			Title:    song["Title"],
+			Artist:   song["Artist"],
+			Album:    song["Album"],
 			Duration: status["duration"],
 			Elapsed:  status["elapsed"],
 			Status:   status["state"]}, nil
 	}
-	return playingStatus{}, errors.New("MPD is not playing anything.")
+	return playingStatus{}, errors.New("MPD is not playing anything")
 }
 
+// keep the connection alive
 func keepAlive(c *mpd.Client) {
+	err := c.Ping()
+	check(err, "ping")
 	go func() {
-		err := c.Ping()
-		check(err, "ping")
 		time.Sleep(30 * time.Second)
 		keepAlive(c)
 	}()
 }
 
-func getHalfPoint(s playingStatus) int {
-	totalLength, err := strconv.ParseFloat(s.Duration, 64)
-
+// get the mid point of a track's duration
+func getHalfPoint(d string) int {
+	totalLength, err := strconv.ParseFloat(d, 64)
 	check(err, "totalLength")
+
 	return int(math.Floor(totalLength / 2))
+}
+
+// start timer for the current playing track
+func startTimer(c *mpd.Client, t string, d string) *time.Timer {
+	// get half point of the track's duration
+	hp := getHalfPoint(d)
+	// check if half point is shorter than 4 minutes
+	var td int
+	if hp < 240 {
+		td = hp
+	} else {
+		td = 240
+	}
+	// create timer that lasts for half the duration of the playing track
+	// or four minutes, whichever is shorter
+	timer := time.AfterFunc(time.Duration(td)*time.Second, func() {
+		s, err := getStatus(c)
+		check(err, "timer status")
+		if t == s.Track {
+			callAPI(s)
+		}
+	})
+	return timer
+}
+
+// submit finished plays to listenBrainz
+func callAPI(s playingStatus) {
+	log.Println("API called:", s.Track)
 }
 
 func main() {
@@ -57,40 +94,33 @@ func main() {
 	// Connect to mpd as a client.
 	c, err := mpd.Dial("tcp", address)
 	check(err, "dial")
+	// keep the connection alive
 	keepAlive(c)
 
 	// get initial status
-	is, err := getStatus(c)
+	s, err := getStatus(c)
 	check(err, "getStatus initial status")
-	fmt.Println("Current track:", is.Track)
+	log.Println("Initial track:", s.Track)
 
-	var oldTrack = make(chan string)
-	go func() {
-		oldTrack <- is.Track
-	}()
+	// create channel that will keep track of the current timer
+	var currentTimer = make(chan *time.Timer, 1)
 
-	// Watch for track changes.
+	// watch for subsystem changes
 	for subsystem := range w.Event {
 		if subsystem == "player" {
+			// check if there's a timer running, and if there is, stop it
+			if len(currentTimer) > 0 {
+				t := <-currentTimer
+				t.Stop()
+			}
 			// Connect to mpd to get the current track
 			s, err := getStatus(c)
+			// if there's anything playing, log it
 			if err == nil {
-				currentTrack := s.Track
-				// add new track
-				hp := getHalfPoint(s)
-				log.Println("Track changed:", currentTrack)
-				time.AfterFunc(time.Duration(hp)*time.Second, func() {
-					go func() {
-						if currentTrack == <-oldTrack {
-							log.Println("API called:", currentTrack)
-						}
-					}()
-				})
-				go func() {
-					oldTrack <- currentTrack
-				}()
-			} else {
-				log.Println("Playlist cleared.")
+				log.Println("Playing Now:", s.Track)
+				timer := startTimer(c, s.Track, s.Duration)
+				// update current timer
+				currentTimer <- timer
 			}
 		}
 	}
