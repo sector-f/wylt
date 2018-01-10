@@ -1,100 +1,22 @@
 package main
 
 import (
-	"errors"
 	"io/ioutil"
 	"log"
-	"math"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/fhs/gompd/mpd"
+	u "github.com/kori/libra/utils"
 )
-
-// struct for what we use
-type playingStatus struct {
-	Track    string
-	Title    string
-	Artist   string
-	Album    string
-	Duration string
-	Elapsed  string
-	Status   string
-}
 
 type config struct {
 	Address string
 	Token   string
 }
 
-// parse the status and return useful info
-func getStatus(c *mpd.Client) (playingStatus, error) {
-	status, err := c.Status()
-	check(err, "status")
-	if status["state"] == "play" || status["state"] == "pause" {
-		song, err := c.CurrentSong()
-		check(err, "current song")
-		return playingStatus{
-			Track:    song["Title"] + " by " + song["Artist"],
-			Title:    song["Title"],
-			Artist:   song["Artist"],
-			Album:    song["Album"],
-			Duration: status["duration"],
-			Elapsed:  status["elapsed"],
-			Status:   status["state"]}, nil
-	}
-	return playingStatus{}, errors.New("MPD is not playing anything")
-}
-
-// keep the connection alive
-func keepAlive(c *mpd.Client) {
-	err := c.Ping()
-	check(err, "ping")
-	go func() {
-		time.Sleep(30 * time.Second)
-		keepAlive(c)
-	}()
-}
-
-// get the mid point of a track's duration
-func getHalfPoint(d string) int {
-	totalLength, err := strconv.ParseFloat(d, 64)
-	check(err, "totalLength")
-
-	return int(math.Floor(totalLength / 2))
-}
-
-// start timer for the current playing track
-func startTimer(c *mpd.Client, t string, d string) *time.Timer {
-	// get half point of the track's duration
-	hp := getHalfPoint(d)
-	// check if half point is shorter than 4 minutes
-	var td int
-	if hp < 240 {
-		td = hp
-	} else {
-		td = 240
-	}
-	// create timer that lasts for half the duration of the playing track
-	// or four minutes, whichever is shorter
-	timer := time.AfterFunc(time.Duration(td)*time.Second, func() {
-		s, err := getStatus(c)
-		check(err, "timer status")
-		if t == s.Track {
-			callAPI(s)
-		}
-	})
-	return timer
-}
-
-// submit finished plays to listenBrainz
-func callAPI(s playingStatus) {
-	log.Println("API called:", s.Track)
-}
-
-func main() {
+func getConfig() config {
 	// read config file
 	path := os.Getenv("XDG_CONFIG_HOME") + "/libra/config.toml"
 	configFile, err := ioutil.ReadFile(path)
@@ -106,21 +28,55 @@ func main() {
 		log.Fatalln("Config file not found.")
 	}
 
-	a := conf.Address
+	return conf
+}
+
+type singlePayload struct {
+	listenedAt int
+	trackMetadata struct {
+		artistName string
+		trackName string
+		releaseName string
+	}
+
+// { "listen_type": "single", "payload": [
+//     {
+//       "listened_at": 1443521965,
+//       "track_metadata": {
+//         "additional_info": {
+//           "release_mbid": "bf9e91ea-8029-4a04-a26a-224e00a83266",
+//           "artist_mbids": [
+//             "db92a151-1ac2-438b-bc43-b82e149ddd50"
+//           ],
+//           "recording_mbid": "98255a8c-017a-4bc7-8dd6-1fa36124572b",
+//           "tags": [ "you", "just", "got", "rick rolled!"]
+//         },
+//         "artist_name": "Rick Astley",
+//         "track_name": "Never Gonna Give You Up",
+//         "release_name": "Whenever you need somebody"
+//       }
+//     }
+//   ]
+// }
+
+
+func main() {
+	// get config info
+	conf := getConfig()
 
 	// Connect to mpd as a client.
-	c, err := mpd.Dial("tcp", a)
+	c, err := mpd.Dial("tcp", conf.Address)
 	check(err, "dial")
 
 	// Connect to mpd and create a watcher for its events.
-	w, err := mpd.NewWatcher("tcp", a, "")
+	w, err := mpd.NewWatcher("tcp", conf.Address, "")
 	check(err, "watcher")
 	// keep the connection alive
-	keepAlive(c)
+	u.KeepAlive(c)
 
 	// get initial status
-	s, err := getStatus(c)
-	check(err, "getStatus initial status")
+	s, err := u.GetStatus(c)
+	check(err, "GetStatus initial status")
 	log.Println("Initial track:", s.Track)
 
 	// create channel that will keep track of the current timer
@@ -135,11 +91,11 @@ func main() {
 				t.Stop()
 			}
 			// Connect to mpd to get the current track
-			s, err := getStatus(c)
+			s, err := u.GetStatus(c)
 			// if there's anything playing, log it
 			if err == nil {
 				log.Println("Playing Now:", s.Track)
-				timer := startTimer(c, s.Track, s.Duration)
+				timer := u.StartTimer(c, s.Track, s.Duration)
 				// update current timer
 				currentTimer <- timer
 			}
