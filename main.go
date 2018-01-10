@@ -2,11 +2,14 @@ package main
 
 import (
 	"errors"
+	"io/ioutil"
 	"log"
 	"math"
+	"os"
 	"strconv"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/fhs/gompd/mpd"
 )
 
@@ -19,6 +22,11 @@ type playingStatus struct {
 	Duration string
 	Elapsed  string
 	Status   string
+}
+
+type config struct {
+	Address string
+	Token   string
 }
 
 // parse the status and return useful info
@@ -87,13 +95,26 @@ func callAPI(s playingStatus) {
 }
 
 func main() {
-	address := "192.168.1.100:6600"
-	// Connect to mpd and create a watcher for its events.
-	w, err := mpd.NewWatcher("tcp", address, "")
-	check(err, "watcher")
+	// read config file
+	path := os.Getenv("XDG_CONFIG_HOME") + "/libra/config.toml"
+	configFile, err := ioutil.ReadFile(path)
+	check(err, "ReadFile")
+
+	// parse config file
+	var conf config
+	if _, err := toml.Decode(string(configFile), &conf); err != nil {
+		log.Fatalln("Config file not found.")
+	}
+
+	a := conf.Address
+
 	// Connect to mpd as a client.
-	c, err := mpd.Dial("tcp", address)
+	c, err := mpd.Dial("tcp", a)
 	check(err, "dial")
+
+	// Connect to mpd and create a watcher for its events.
+	w, err := mpd.NewWatcher("tcp", a, "")
+	check(err, "watcher")
 	// keep the connection alive
 	keepAlive(c)
 
@@ -140,6 +161,6 @@ func main() {
 
 func check(e error, where string) {
 	if e != nil {
-		log.Println("error here: ", where, e)
+		log.Fatalln("error here:", where, e)
 	}
 }
