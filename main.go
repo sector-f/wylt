@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -14,29 +15,22 @@ type playingStatus struct {
 	Track    string
 	Duration string
 	Elapsed  string
+	Status   string
 }
 
-func getStatus(c *mpd.Client) playingStatus {
+func getStatus(c *mpd.Client) (playingStatus, error) {
 	status, err := c.Status()
 	check(err, "status")
-	if status["state"] == "pause" {
-		return playingStatus{
-			Track:    "paused",
-			Duration: status["duration"],
-			Elapsed:  status["elapsed"]}
-	} else if status["state"] == "play" {
+	if status["state"] == "play" || status["state"] == "pause" {
 		song, err := c.CurrentSong()
 		check(err, "current song")
 		return playingStatus{
 			Track:    song["Title"] + " by " + song["Artist"],
 			Duration: status["duration"],
-			Elapsed:  status["elapsed"]}
+			Elapsed:  status["elapsed"],
+			Status:   status["state"]}, nil
 	}
-	// mpd is not playing
-	return playingStatus{
-		Track:    "Nothing",
-		Duration: "Nothing",
-		Elapsed:  "Nothing"}
+	return playingStatus{}, errors.New("MPD is not playing anything.")
 }
 
 func keepAlive(c *mpd.Client) {
@@ -49,13 +43,10 @@ func keepAlive(c *mpd.Client) {
 }
 
 func getHalfPoint(s playingStatus) int {
-	if s.Duration != "Nothing" {
-		totalLength, err := strconv.ParseFloat(s.Duration, 64)
+	totalLength, err := strconv.ParseFloat(s.Duration, 64)
 
-		check(err, "totalLength")
-		return int(math.Floor(totalLength / 2))
-	}
-	return -1
+	check(err, "totalLength")
+	return int(math.Floor(totalLength / 2))
 }
 
 func main() {
@@ -68,42 +59,39 @@ func main() {
 	check(err, "dial")
 	keepAlive(c)
 
-	// Create channel that will keep track of the current playing track.
-	currentTrack := make(chan string)
+	// get initial status
+	is, err := getStatus(c)
+	check(err, "getStatus initial status")
+	fmt.Println("Current track:", is.Track)
 
-	// get initial track's status
+	var oldTrack = make(chan string)
 	go func() {
-		is := getStatus(c)
-		fmt.Println("Current track:", is.Track)
-		currentTrack <- is.Track
+		oldTrack <- is.Track
 	}()
 
 	// Watch for track changes.
 	for subsystem := range w.Event {
 		if subsystem == "player" {
-			go func() {
-				// get old track
-				oldTrack := <-currentTrack
-				// Connect to mpd to get the current track
-				s := getStatus(c)
-				hp := getHalfPoint(s)
+			// Connect to mpd to get the current track
+			s, err := getStatus(c)
+			if err == nil {
+				currentTrack := s.Track
 				// add new track
-				go func() {
-					currentTrack <- s.Track
-					fmt.Println("updating track...")
-				}()
-				// if there is a halfpoint
-				if hp != -1 {
-					fmt.Println("Current track:", s.Track)
-					time.AfterFunc(time.Duration(hp)*time.Second, func() {
-						if s.Track == oldTrack {
-							fmt.Println("API called!", s.Track)
+				hp := getHalfPoint(s)
+				log.Println("Track changed:", currentTrack)
+				time.AfterFunc(time.Duration(hp)*time.Second, func() {
+					go func() {
+						if currentTrack == <-oldTrack {
+							log.Println("API called:", currentTrack)
 						}
-					})
-				} else {
-					fmt.Println("Playlist cleared.")
-				}
-			}()
+					}()
+				})
+				go func() {
+					oldTrack <- currentTrack
+				}()
+			} else {
+				log.Println("Playlist cleared.")
+			}
 		}
 	}
 	// Log errors.
