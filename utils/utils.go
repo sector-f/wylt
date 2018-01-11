@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"math"
@@ -10,9 +11,39 @@ import (
 	"github.com/fhs/gompd/mpd"
 )
 
+type Submission struct {
+	ListenType string    `json:"listen_type"`
+	Payloads   []Payload `json:"payload"`
+}
+
+type Payloads []Payload
+
+type Payload struct {
+	ListenedAt    int `json:"listened_at"`
+	TrackMetadata `json:"track_metadata"`
+}
+
+type TrackMetadata struct {
+	ArtistName  string `json:"artist_name"`
+	TrackName   string `json:"track_name"`
+	ReleaseName string `json:"release_name"`
+}
+
 // submit finished plays to listenBrainz
 func CallAPI(s PlayingStatus) {
-	log.Println("API called:", s.Track)
+	p := Submission{
+		ListenType: "single",
+		Payloads: Payloads{
+			Payload: Payload{
+				ListenedAt: int(time.Now().Unix()),
+				TrackMetadata: TrackMetadata{
+					s.Title,
+					s.Artist,
+					s.Album,
+				}},
+		}}
+	pm, _ := json.Marshal(p)
+	log.Println("API called:", string(pm))
 }
 
 // struct for what we use
