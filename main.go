@@ -49,7 +49,7 @@ type playingStatus struct {
 	Album    string
 	Duration string
 	Elapsed  string
-	Status   string
+	State    string
 }
 
 // read configuration file and return a config struct
@@ -109,6 +109,7 @@ func submitListen(j []byte, token string) *http.Response {
 	url := "https://api.listenbrainz.org/1/submit-listens"
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(j))
+	check(err, "NewRequest")
 	req.Header.Set("Authorization", "Token "+token)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -139,7 +140,7 @@ func getStatus(c *mpd.Client) (playingStatus, error) {
 			Album:    song["Album"],
 			Duration: status["duration"],
 			Elapsed:  status["elapsed"],
-			Status:   status["state"]}, nil
+			State:    status["state"]}, nil
 	}
 
 	return playingStatus{}, errors.New("MPD is not playing anything")
@@ -232,7 +233,7 @@ func main() {
 			// Connect to mpd to get the current track
 			s, err := getStatus(c)
 			// if there's anything playing, log it
-			if err == nil {
+			if err == nil && s.State == "play" {
 				log.Println("Playing Now:", s.Track)
 				response := submitListen(formatJSON(s, "playing_now"), conf.Token)
 				log.Println("response status:", s.Track, ":", response.Status)
