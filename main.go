@@ -149,7 +149,7 @@ func formatJSON(s playingStatus, lt string) []byte {
 	sp := Submission{
 		ListenType: lt,
 		Payloads: Payloads{
-			Payload: p,
+			p,
 		},
 	}
 
