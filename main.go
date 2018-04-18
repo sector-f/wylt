@@ -75,21 +75,20 @@ func getConfig() config {
 	// read config file
 	path := os.Getenv("XDG_CONFIG_HOME") + "/libra/config.toml"
 	configFile, err := ioutil.ReadFile(path)
-	check(err, "ReadFile@getConfig")
+	reportErr(err, "ReadFile@getConfig")
 
 	// parse config file and assign to a struct
 	var c config
 	if _, err := toml.Decode(string(configFile), &c); err != nil {
 		log.Fatalln("Config file not found.")
 	}
-
 	return c
 }
 
 // keep the connection alive
 func keepAlive(c *mpd.Client) {
 	err := c.Ping()
-	check(err, "ping")
+	reportErr(err, "ping")
 
 	// call keepAlive again after 30 seconds
 	go func() {
@@ -101,12 +100,12 @@ func keepAlive(c *mpd.Client) {
 // query mpd for the status of the player
 func getStatus(c *mpd.Client) (playingStatus, error) {
 	status, err := c.Status()
-	check(err, "status")
+	reportErr(err, "status")
 
 	if status["state"] == "play" || status["state"] == "pause" {
 		// query mpd for the info about the current song
 		song, err := c.CurrentSong()
-		check(err, "CurrentSong@getStatus")
+		reportErr(err, "CurrentSong@getStatus")
 
 		// return struct with the info libra uses the most
 		return playingStatus{
@@ -124,25 +123,24 @@ func getStatus(c *mpd.Client) (playingStatus, error) {
 
 // format listen info as JSON
 func formatJSON(s playingStatus, lt string) []byte {
-	var p Payload
+	// these values don't change
+	tm := TrackMetadata{
+		s.Title,
+		s.Artist,
+		s.Album,
+	}
+
 	// insert values into struct
+	var p Payload
 	if lt == "playing_now" {
-		p = Payload{
-			TrackMetadata: TrackMetadata{
-				s.Title,
-				s.Artist,
-				s.Album,
-			}}
+		p = Payload{TrackMetadata: tm}
 	} else if lt == "single" {
 		p = Payload{
-			ListenedAt: int(time.Now().Unix()),
-			TrackMetadata: TrackMetadata{
-				s.Title,
-				s.Artist,
-				s.Album,
-			}}
-
+			ListenedAt:    int(time.Now().Unix()),
+			TrackMetadata: tm,
+		}
 	} else {
+		// there's nothing to return
 		return []byte("")
 	}
 
@@ -155,7 +153,7 @@ func formatJSON(s playingStatus, lt string) []byte {
 
 	// convert struct to JSON and return it
 	pm, err := json.Marshal(sp)
-	check(err, "Marshal@formatJSON")
+	reportErr(err, "Marshal@formatJSON")
 	return pm
 }
 
@@ -163,7 +161,7 @@ func formatJSON(s playingStatus, lt string) []byte {
 func startTimer(c *mpd.Client, s playingStatus, conf config) *time.Timer {
 	// get half point of the track's duration
 	totalLength, err := strconv.ParseFloat(s.Duration, 64)
-	check(err, "totalLength")
+	reportErr(err, "totalLength")
 	hp := int(math.Floor(totalLength / 2))
 
 	// source: https://listenbrainz.readthedocs.io/en/latest/dev/api.html
@@ -181,7 +179,7 @@ func startTimer(c *mpd.Client, s playingStatus, conf config) *time.Timer {
 	// create timer
 	timer := time.AfterFunc(time.Duration(td)*time.Second, func() {
 		cs, err := getStatus(c)
-		check(err, "timer status")
+		reportErr(err, "timer status")
 
 		if s.Track == cs.Track {
 			submitRequest(formatJSON(cs, "single"), conf)
@@ -197,31 +195,31 @@ func submitRequest(j []byte, conf config) *http.Response {
 	url := "https://api.listenbrainz.org/1/submit-listens"
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(j))
-	check(err, "NewRequest@submitRequest")
+	reportErr(err, "NewRequest@submitRequest")
 	req.Header.Set("Authorization", "Token "+conf.Token)
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
-	check(err, "Do@submitRequest")
+	reportErr(err, "Do@submitRequest")
 
 	defer resp.Body.Close()
 	return resp
 }
 
 func main() {
-	// get config info
+	// get config info from $PATH
 	conf := getConfig()
 
 	// Connect to mpd as a client.
 	c, err := mpd.Dial("tcp", conf.Address)
-	check(err, "dial")
+	reportErr(err, "dial")
 	// keep the connection alive
 	keepAlive(c)
 
 	// Connect to mpd and create a watcher for its events.
 	w, err := mpd.NewWatcher("tcp", conf.Address, "")
-	check(err, "watcher")
+	reportErr(err, "watcher")
 
 	// get initial status
 	s, err := getStatus(c)
@@ -266,12 +264,13 @@ func main() {
 
 	// Clean everything up.
 	err = c.Close()
-	check(err, "client close")
+	reportErr(err, "client close")
 	err = w.Close()
-	check(err, "watcher close")
+	reportErr(err, "watcher close")
 }
 
-func check(e error, where string) {
+// helper function to log errors when they happen
+func reportErr(e error, where string) {
 	if e != nil {
 		log.Fatalln("error here:", where, e)
 	}
