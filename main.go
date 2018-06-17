@@ -16,42 +16,18 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
-	"math"
-	"net/http"
 	"os"
-	"strconv"
-	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/fhs/gompd/mpd"
+
+	p "github.com/kori/libra/players"
+	"github.com/kori/libra/players/mpd"
+
+	"github.com/kori/libra/services/listenbrainz"
 )
-
-// Submission is a struct for marshalling the JSON payload
-type Submission struct {
-	ListenType string    `json:"listen_type"`
-	Payloads   []Payload `json:"payload"`
-}
-
-// Payloads is a helper struct for marshalling the JSON payload
-type Payloads []Payload
-
-// Payload is a helper struct for marshalling the JSON payload
-type Payload struct {
-	ListenedAt    int `json:"listened_at,omitempty"`
-	TrackMetadata `json:"track_metadata"`
-}
-
-// TrackMetadata is a helper struct for marshalling the JSON payload
-type TrackMetadata struct {
-	TrackName   string `json:"track_name"`
-	ArtistName  string `json:"artist_name"`
-	ReleaseName string `json:"release_name"`
-}
 
 // struct for unmarshalling the config
 type config struct {
@@ -59,23 +35,14 @@ type config struct {
 	Token   string
 }
 
-// struct for encoding the current status of the player
-type playingStatus struct {
-	Track    string
-	Title    string
-	Artist   string
-	Album    string
-	Duration string
-	Elapsed  string
-	State    string
-}
-
 // read configuration file and return a config struct
 func getConfig() config {
 	// read config file
 	path := os.Getenv("XDG_CONFIG_HOME") + "/libra/config.toml"
 	configFile, err := ioutil.ReadFile(path)
-	reportErr(err, "ReadFile@getConfig")
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	// parse config file and assign to a struct
 	var c config
@@ -85,193 +52,34 @@ func getConfig() config {
 	return c
 }
 
-// keep the connection alive
-func keepAlive(c *mpd.Client) {
-	err := c.Ping()
-	reportErr(err, "ping")
-
-	// call keepAlive again after 30 seconds
-	go func() {
-		time.Sleep(30 * time.Second)
-		keepAlive(c)
-	}()
-}
-
-// query mpd for the status of the player
-func getStatus(c *mpd.Client) (playingStatus, error) {
-	status, err := c.Status()
-	reportErr(err, "status")
-
-	if status["state"] == "play" || status["state"] == "pause" {
-		// query mpd for the info about the current song
-		song, err := c.CurrentSong()
-		reportErr(err, "CurrentSong@getStatus")
-
-		// return struct with the info libra uses the most
-		return playingStatus{
-			Track:    song["Title"] + " by " + song["Artist"],
-			Title:    song["Title"],
-			Artist:   song["Artist"],
-			Album:    song["Album"],
-			Duration: status["duration"],
-			Elapsed:  status["elapsed"],
-			State:    status["state"]}, nil
-	}
-
-	return playingStatus{}, errors.New("MPD is not playing anything")
-}
-
-// format listen info as JSON
-func formatJSON(s playingStatus, lt string) []byte {
-	// these values don't change
-	tm := TrackMetadata{
-		s.Title,
-		s.Artist,
-		s.Album,
-	}
-
-	// insert values into struct
-	var p Payload
-	if lt == "playing_now" {
-		p = Payload{TrackMetadata: tm}
-	} else if lt == "single" {
-		p = Payload{
-			ListenedAt:    int(time.Now().Unix()),
-			TrackMetadata: tm,
-		}
-	} else {
-		// there's nothing to return
-		return []byte("")
-	}
-
-	sp := Submission{
-		ListenType: lt,
-		Payloads: Payloads{
-			p,
-		},
-	}
-
-	// convert struct to JSON and return it
-	pm, err := json.Marshal(sp)
-	reportErr(err, "Marshal@formatJSON")
-	return pm
-}
-
-// start timer for the current playing track
-func startTimer(c *mpd.Client, s playingStatus, conf config) *time.Timer {
-	// get half point of the track's duration
-	totalLength, err := strconv.ParseFloat(s.Duration, 64)
-	reportErr(err, "totalLength")
-	hp := int(math.Floor(totalLength / 2))
-
-	// source: https://listenbrainz.readthedocs.io/en/latest/dev/api.html
-	// Listens should be submitted for tracks when the user has listened to
-	// half the track or 4 minutes of the track, whichever is lower. If the
-	// user hasn’t listened to 4 minutes or half the track, it doesn’t fully
-	// count as a listen and should not be submitted.
-	var td int
-	if hp > 240 {
-		td = 240
-	} else {
-		td = hp
-	}
-
-	// create timer
-	timer := time.AfterFunc(time.Duration(td)*time.Second, func() {
-		cs, err := getStatus(c)
-		reportErr(err, "timer status")
-
-		if s.Track == cs.Track {
-			submitRequest(formatJSON(cs, "single"), conf)
-			log.Println("Track submitted:", cs.Track)
-		}
-	})
-
-	return timer
-}
-
-// submit the given status to ListenBrainz
-func submitRequest(j []byte, conf config) *http.Response {
-	url := "https://api.listenbrainz.org/1/submit-listens"
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(j))
-	reportErr(err, "NewRequest@submitRequest")
-	req.Header.Set("Authorization", "Token "+conf.Token)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	reportErr(err, "Do@submitRequest")
-
-	defer resp.Body.Close()
-	return resp
-}
-
 func main() {
 	// get config info from $PATH
 	conf := getConfig()
 
-	// Connect to mpd as a client.
-	c, err := mpd.Dial("tcp", conf.Address)
-	reportErr(err, "dial")
-	// keep the connection alive
-	keepAlive(c)
-
-	// Connect to mpd and create a watcher for its events.
-	w, err := mpd.NewWatcher("tcp", conf.Address, "")
-	reportErr(err, "watcher")
-
-	// get initial status
-	s, err := getStatus(c)
-	if err != nil {
-		log.Println(err)
-	} else {
-		log.Println("Initial track:", s.Track)
-		response := submitRequest(formatJSON(s, "playing_now"), conf)
-		log.Println("response status:", s.Track, ":", response.Status)
-	}
-
+	// create channels to keep track of the current statuses
+	var statusChan = make(chan p.Status)
+	var errorChan = make(chan error)
 	// create channel that will keep track of the current timer
-	var currentTimer = make(chan *time.Timer, 1)
+	// var currentTimer = make(chan *time.Timer)
 
-	// watch for subsystem changes
-	for subsystem := range w.Event {
-		if subsystem == "player" {
-			// check if there's a timer running, and if there is, stop it
-			if len(currentTimer) > 0 {
-				t := <-currentTimer
-				t.Stop()
+	// start mpd watcher
+	go mpd.Watch(conf.Address, statusChan, errorChan)
+	for s := range statusChan {
+		go func() {
+			track := s.Title + " by " + s.Artist
+			log.Println("mpd: Now playing:", track)
+
+			r, err := listenbrainz.PostPlayingNow(s, conf.Token)
+			if err != nil {
+				log.Fatalln(err)
 			}
-			// Connect to mpd to get the current track
-			s, err := getStatus(c)
-			// if there's anything playing, log it
-			if err == nil && s.State == "play" {
-				log.Println("Playing Now:", s.Track)
-				response := submitRequest(formatJSON(s, "playing_now"), conf)
-				log.Println("response status:", s.Track, ":", response.Status)
-				timer := startTimer(c, s, conf)
-				// update current timer
-				currentTimer <- timer
-			}
-		}
+			log.Println("listenbrainz:", r.Status+":", track)
+		}()
 	}
-	// Log errors.
+
 	go func() {
-		for err := range w.Error {
-			log.Println("Error:", err)
+		for s := range errorChan {
+			fmt.Println(s)
 		}
 	}()
-
-	// Clean everything up.
-	err = c.Close()
-	reportErr(err, "client close")
-	err = w.Close()
-	reportErr(err, "watcher close")
-}
-
-// helper function to log errors when they happen
-func reportErr(e error, where string) {
-	if e != nil {
-		log.Fatalln("error here:", where, e)
-	}
 }
