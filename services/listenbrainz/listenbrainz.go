@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -55,7 +54,7 @@ func formatAsJSON(s p.Status, lt string) ([]byte, error) {
 		}
 	} else {
 		// there's nothing to return
-		return []byte(""), errors.New("Unrecognized listen type.")
+		return nil, errors.New("Unrecognized listen type.")
 	}
 
 	sp := Submission{
@@ -68,17 +67,16 @@ func formatAsJSON(s p.Status, lt string) ([]byte, error) {
 	// convert struct to JSON and return it
 	pm, err := json.Marshal(sp)
 	if err != nil {
-		log.Println("Failed to marshal to JSON", err)
 		return nil, err
 	}
 	return pm, nil
 }
 
-func getSubmissionTime(d string) int {
+func getSubmissionTime(d string) (int, err) {
 	// get halfway point of the track's duration
 	totalLength, err := strconv.ParseFloat(d, 64)
 	if err != nil {
-		log.Fatalln("Failed to parse duration:", err)
+		return 0, err
 	}
 	hp := int(math.Floor(totalLength / 2))
 
@@ -93,42 +91,51 @@ func getSubmissionTime(d string) int {
 	} else {
 		st = hp
 	}
-	return st
+	return st, nil
 }
 
 // create a request with the given json info
-func createRequest(json []byte, token string) *http.Request {
+func createRequest(json []byte, token string) (*http.Request, error) {
 	url := "https://api.listenbrainz.org/1/submit-listens"
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(json))
 	if err != nil {
-		log.Println("Failed to generate request:", err)
+		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Token "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	return req
+	return req, nil
 }
 
 // SubmitRequest executes the request
-func SubmitRequest(req *http.Request) *http.Response {
+func SubmitRequest(req *http.Request) (*http.Response, error) {
 	client := &http.Client{}
+
 	resp, err := client.Do(req)
+	defer resp.Body.Close()
+
 	if err != nil {
-		log.Println("Failed to submit request:", err)
+		return nil, err
 	}
 
-	defer resp.Body.Close()
-	return resp
+	return resp, nil
 }
 
 // PostPlayingNow posts the given Status to ListenBrainz as what's playing now.
 func PostPlayingNow(s p.Status, token string) (*http.Response, error) {
 	j, err := formatAsJSON(s, "playing_now")
 	if err != nil {
-		return &http.Response{}, err
+		return nil, err
 	}
-	response := SubmitRequest(createRequest(j, token))
+
+	req, err := createRequest(j, token)
+	if err != nil {
+		return nil, err
+	}
+
+	response := SubmitRequest(req)
 	return response, nil
 }
 
@@ -136,8 +143,14 @@ func PostPlayingNow(s p.Status, token string) (*http.Response, error) {
 func PostSingle(s p.Status, token string) (*http.Response, error) {
 	j, err := formatAsJSON(s, "single")
 	if err != nil {
-		return &http.Response{}, err
+		return nil, err
 	}
-	response := SubmitRequest(createRequest(j, token))
+
+	req, err := createRequest(j, token)
+	if err != nil {
+		return nil, err
+	}
+
+	response := SubmitRequest(req)
 	return response, nil
 }
