@@ -2,7 +2,6 @@ package mpd
 
 import (
 	"errors"
-	"log"
 	"time"
 
 	m "github.com/fhs/gompd/mpd"
@@ -10,11 +9,11 @@ import (
 )
 
 // a function to connect to mpd and return the client
-func connect(addr string) (*m.Client, error) {
+func Connect(addr string) (*m.Client, error) {
 	// Connect to mpd as a client.
 	c, err := m.Dial("tcp", addr)
 	if err != nil {
-		return &m.Client{}, err
+		return nil, err
 	}
 
 	// keep the connection alive
@@ -64,13 +63,13 @@ func Watch(addr string, statusCh chan<- p.Status, errorCh chan<- error) {
 	c, err := connect(addr)
 	defer c.Close()
 	if err != nil {
-		log.Fatalln(err)
+		errorCh <- err
 	}
 	// Create a watcher for its events
 	w, err := m.NewWatcher("tcp", addr, "")
 	defer w.Close()
 	if err != nil {
-		log.Fatalln("Failed to create a watcher: ", err)
+		errorCh <- err
 	}
 
 	// Watch for player changes
@@ -78,8 +77,10 @@ func Watch(addr string, statusCh chan<- p.Status, errorCh chan<- error) {
 		if subsystem == "player" {
 			// Connect to mpd to get the current track
 			s, err := GetStatus(c)
-			// if there's anything playing, log it
-			if err == nil && s.State == "play" {
+			if err != nil {
+				errorCh <- err
+				// if there's anything playing, log it
+			} else if err == nil && s.State == "play" {
 				statusCh <- s
 			}
 		} else {
@@ -88,7 +89,7 @@ func Watch(addr string, statusCh chan<- p.Status, errorCh chan<- error) {
 		}
 	}
 
-	// Watch for errors
+	// Watch for mpd's errors
 	go func() {
 		for err := range w.Error {
 			errorCh <- err

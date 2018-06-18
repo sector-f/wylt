@@ -16,7 +16,6 @@
 package main
 
 import (
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -59,27 +58,24 @@ func main() {
 	// create channels to keep track of the current statuses
 	var statusChan = make(chan p.Status)
 	var errorChan = make(chan error)
-	// create channel that will keep track of the current timer
-	// var currentTimer = make(chan *time.Timer)
 
 	// start mpd watcher
 	go mpd.Watch(conf.Address, statusChan, errorChan)
-	for s := range statusChan {
-		go func() {
-			track := s.Title + " by " + s.Artist
-			log.Println("mpd: Now playing:", track)
 
-			r, err := listenbrainz.PostPlayingNow(s, conf.Token)
-			if err != nil {
-				log.Fatalln(err)
-			}
-			log.Println("listenbrainz:", r.Status+":", track)
-		}()
+	for s := range statusChan {
+		track := s.Title + " by " + s.Artist
+		log.Println("mpd: Now playing:", track)
+
+		r, err := listenbrainz.PostPlayingNow(s, conf.Token)
+		if err != nil {
+			log.Println(err)
+		}
+		log.Println("listenbrainz:", r.Status+":", track)
 	}
 
 	go func() {
 		for s := range errorChan {
-			fmt.Println(s)
+			log.Println(s)
 		}
 	}()
 }

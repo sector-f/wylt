@@ -72,7 +72,7 @@ func formatAsJSON(s p.Status, lt string) ([]byte, error) {
 	return pm, nil
 }
 
-func getSubmissionTime(d string) (int, err) {
+func getSubmissionTime(d string) (int, error) {
 	// get halfway point of the track's duration
 	totalLength, err := strconv.ParseFloat(d, 64)
 	if err != nil {
