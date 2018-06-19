@@ -135,7 +135,11 @@ func PostPlayingNow(s p.Status, token string) (*http.Response, error) {
 		return nil, err
 	}
 
-	response := SubmitRequest(req)
+	response, err := SubmitRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
 	return response, nil
 }
 
@@ -151,6 +155,10 @@ func PostSingle(s p.Status, token string) (*http.Response, error) {
 		return nil, err
 	}
 
-	response := SubmitRequest(req)
+	response, err := SubmitRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
 	return response, nil
 }
