@@ -1,28 +1,13 @@
 package mpd
 
 import (
-	"errors"
 	"time"
 
 	m "github.com/fhs/gompd/mpd"
 	p "github.com/kori/libra/players"
 )
 
-// a function to connect to mpd and return the client
-func Connect(addr string) (*m.Client, error) {
-	// Connect to mpd as a client.
-	c, err := m.Dial("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-
-	// keep the connection alive
-	keepAlive(c)
-
-	return c, nil
-}
-
-// a function to keep the mpd connection alive
+// keepAlive pings mpd every 30 seconds so the connection doesn't time out
 func keepAlive(c *m.Client) {
 	go func() {
 		for range time.Tick(30 * time.Second) {
@@ -31,60 +16,53 @@ func keepAlive(c *m.Client) {
 	}()
 }
 
-// GetStatus queries mpd and returns a Status struct with the current state
-func GetStatus(c *m.Client) (p.Status, error) {
-	status, err := c.Status()
-	if err != nil {
-		return p.Status{}, err
-	}
-
-	if status["state"] == "play" || status["state"] == "pause" {
-		// query mpd for the info about the current song
-		song, err := c.CurrentSong()
-		if err != nil {
-			return p.Status{}, err
-		}
-
-		return p.Status{
-			Title:    song["Title"],
-			Artist:   song["Artist"],
-			Album:    song["Album"],
-			Duration: status["duration"],
-			Elapsed:  status["elapsed"],
-			State:    status["state"]}, nil
-	}
-
-	return p.Status{}, errors.New("MPD is not playing anything")
+// parseStatus gets the most relevant info from the passed Attrs struct
+func parseStatus(status mpd.Attrs, song mpd.Attrs) p.Status {
+	return p.Status{
+		Title:    song["Title"],
+		Artist:   song["Artist"],
+		Album:    song["Album"],
+		Duration: status["duration"],
+		Elapsed:  status["elapsed"],
+		State:    status["state"]}
 }
 
 // Watch monitors mpd for changes and posts the relevant info to the statusCh and errorCh channels
-func Watch(addr string, statusCh chan<- p.Status, errorCh chan<- error) {
-	// Connect to mpd
-	c, err := connect(addr)
-	defer c.Close()
+func Watch(addr string, statusCh chan<- p.Status, errorCh chan<- error) error {
+	// Connect to mpd as a client.
+	c, err := m.Dial("tcp", addr)
 	if err != nil {
-		errorCh <- err
+		return err
 	}
+	// keep the connection alive
+	keepAlive(c)
+
 	// Create a watcher for its events
 	w, err := m.NewWatcher("tcp", addr, "")
 	defer w.Close()
 	if err != nil {
-		errorCh <- err
+		return err
 	}
 
-	// Watch for player changes
 	for subsystem := range w.Event {
+		// Watch for player changes
 		if subsystem == "player" {
-			// Connect to mpd to get the current track
-			s, err := GetStatus(c)
+			status, err := c.Status()
 			if err != nil {
-				errorCh <- err
-				// if there's anything playing, log it
-			} else if err == nil && s.State == "play" {
+				return err
+			}
+			song, err := c.CurrentSong()
+			if err != nil {
+				return err
+			}
+
+			s := parseStatus(status, song)
+			// only playing tracks matter
+			if s.State == "play" {
 				statusCh <- s
 			}
 		} else {
-			// empty the event channel so the program doesn't lock up
+			// other kinds of events aren't handled, so empty the event channel
 			<-w.Event
 		}
 	}
@@ -92,7 +70,11 @@ func Watch(addr string, statusCh chan<- p.Status, errorCh chan<- error) {
 	// Watch for mpd's errors
 	go func() {
 		for err := range w.Error {
-			errorCh <- err
+			go func() {
+				errorCh <- err
+			}()
 		}
 	}()
+
+	return nil
 }
