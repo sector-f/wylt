@@ -51,13 +51,6 @@ func getConfig() config {
 	return c
 }
 
-// call f with the passed status
-func callWithStatus(f func(p.Status), status p.Status) func() {
-	return func() {
-		f(status)
-	}
-}
-
 func main() {
 	// get config info from $PATH
 	conf := getConfig()
@@ -74,18 +67,22 @@ func main() {
 
 	// watch the automatic events channel
 	for current := range mpdEvents {
-		log.Println("mpd: Playing now:", current.Title, "by", current.Artist, "on", current.Album)
+		func(old p.Status) {
+			log.Println("mpd: Playing now:", current.Title, "by", current.Artist, "on", current.Album)
 
-		r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
-		if err != nil {
-			log.Println(err)
-		}
-		log.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
+			r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
+			if err != nil {
+				log.Println(err)
+			}
+			log.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
+			r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
+			if err != nil {
+				log.Println(err)
+			}
+			log.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
 
-		// submit the track if the submission time has elapsed and if it's still the same track
-		time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second,
-			// this is required to create the timers for the required statuses
-			callWithStatus(func(old p.Status) {
+			// submit the track if the submission time has elapsed and if it's still the same track
+			time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second, func() {
 				new := <-playingNow
 				if old.Track == new.Track {
 					r, err := lb.SubmitSingle(lb.Track(old.Track), conf.Token)
@@ -94,6 +91,7 @@ func main() {
 					}
 					log.Println("listenbrainz:", r.Status+":", "Single submission:", old.Track)
 				}
-			}, current))
+			})
+		}(current)
 	}
 }
