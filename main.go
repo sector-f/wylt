@@ -19,13 +19,11 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"sync"
 
-	"github.com/BurntSushi/toml"
-
-	p "github.com/kori/libra/players"
 	"github.com/kori/libra/players/mpd"
 
-	"github.com/kori/libra/services/listenbrainz"
+	"github.com/BurntSushi/toml"
 )
 
 // struct for unmarshalling the config
@@ -55,27 +53,36 @@ func main() {
 	// get config info from $PATH
 	conf := getConfig()
 
-	// create channels to keep track of the current statuses
-	var statusChan = make(chan p.Status)
-	var errorChan = make(chan error)
-
-	// start mpd watcher
-	go mpd.Watch(conf.Address, statusChan, errorChan)
-
-	for s := range statusChan {
-		track := s.Title + " by " + s.Artist
-		log.Println("mpd: Now playing:", track)
-
-		r, err := listenbrainz.PostPlayingNow(s, conf.Token)
-		if err != nil {
-			log.Println(err)
-		}
-		log.Println("listenbrainz:", r.Status+":", track)
-	}
+	automaticChan, explicitChan, errorChan := mpd.Watch(conf.Address)
 
 	go func() {
-		for s := range errorChan {
-			log.Println(s)
+		for err := range errorChan {
+			log.Println(err)
 		}
 	}()
+
+	go func() {
+		for s := range automaticChan {
+			var t = struct {
+				Title  string
+				Artist string
+				Album  string
+			}{
+				s.Title,
+				s.Artist,
+				s.Album,
+			}
+
+			log.Println("mpd: Now playing:", t.Title, "by", t.Artist, "on", t.Album)
+			r, err := lb.SubmitPlayingNow(lb.Track(t), conf.Token)
+			if err != nil {
+				log.Println(err)
+			}
+			log.Println("listenbrainz:", r.Status+":", track)
+		}
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	wg.Wait()
 }
