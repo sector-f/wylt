@@ -19,11 +19,13 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"sync"
+	"time"
 
+	p "github.com/kori/libra/players"
 	"github.com/kori/libra/players/mpd"
 
 	"github.com/BurntSushi/toml"
+	lb "github.com/kori/go-listenbrainz"
 )
 
 // struct for unmarshalling the config
@@ -49,40 +51,48 @@ func getConfig() config {
 	return c
 }
 
+func callWithStatus(f func(p.Status), status p.Status) func() {
+	return func() {
+		f(status)
+	}
+}
+
 func main() {
 	// get config info from $PATH
 	conf := getConfig()
 
-	automaticChan, explicitChan, errorChan := mpd.Watch(conf.Address)
+	// set up channels for automatic monitoring , explicit requests, and errors
+	mpdEvents, playingNow, errors := mpd.Watch(conf.Address)
 
+	// watch the errors channel
 	go func() {
-		for err := range errorChan {
+		for err := range errors {
 			log.Println(err)
 		}
 	}()
 
-	go func() {
-		for s := range automaticChan {
-			var t = struct {
-				Title  string
-				Artist string
-				Album  string
-			}{
-				s.Title,
-				s.Artist,
-				s.Album,
-			}
+	// watch the automatic events channel
+	for current := range mpdEvents {
+		log.Println("mpd: Playing now:", current.Title, "by", current.Artist, "on", current.Album)
 
-			log.Println("mpd: Now playing:", t.Title, "by", t.Artist, "on", t.Album)
-			r, err := lb.SubmitPlayingNow(lb.Track(t), conf.Token)
-			if err != nil {
-				log.Println(err)
-			}
-			log.Println("listenbrainz:", r.Status+":", track)
+		r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
+		if err != nil {
+			log.Println(err)
 		}
-	}()
+		log.Println("listenbrainz:", r.Status+":", "Playing now:", s.Track)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	wg.Wait()
+		// submit the track if the submission time has elapsed and if it's still the same track
+		time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second,
+			// this is required to create the timers for the required statuses
+			callWithStatus(func(old p.Status) {
+				new := <-playingNow
+				if old.Track == new.Track {
+					r, err := lb.SubmitSingle(lb.Track(old.Track), conf.Token)
+					if err != nil {
+						log.Println(err)
+					}
+					log.Println("listenbrainz:", r.Status+":", "Single submission:", old.Track)
+				}
+			}, current))
+	}
 }
