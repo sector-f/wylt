@@ -6,8 +6,8 @@ type Track struct {
 	Album  string
 }
 type CurrentStatus struct {
-	Duration string
-	Elapsed  string
+	Duration int
+	Elapsed  int
 	State    string
 }
 

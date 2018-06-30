@@ -1,6 +1,8 @@
 package mpd
 
 import (
+	"math"
+	"strconv"
 	"time"
 
 	m "github.com/fhs/gompd/mpd"
@@ -17,7 +19,19 @@ func keepAlive(c *m.Client) {
 }
 
 // encodeStatus gets the most relevant info from the passed Attrs struct
-func encodeStatus(status m.Attrs, song m.Attrs) p.Status {
+func encodeStatus(status m.Attrs, song m.Attrs) (p.Status, error) {
+	fe, err := strconv.ParseFloat(status["elapsed"], 64)
+	if err != nil {
+		return p.Status{}, err
+	}
+	elapsed := int(math.Floor(fe))
+
+	de, err := strconv.ParseFloat(status["duration"], 64)
+	if err != nil {
+		return p.Status{}, err
+	}
+	duration := int(math.Floor(de))
+
 	return p.Status{
 		Track: p.Track{
 			Title:  song["Title"],
@@ -25,11 +39,11 @@ func encodeStatus(status m.Attrs, song m.Attrs) p.Status {
 			Album:  song["Album"],
 		},
 		CurrentStatus: p.CurrentStatus{
-			Duration: status["duration"],
-			Elapsed:  status["elapsed"],
+			Duration: duration,
+			Elapsed:  elapsed,
 			State:    status["state"],
 		},
-	}
+	}, nil
 }
 
 // Watch monitors mpd for changes and posts the info to the channels.
@@ -64,6 +78,8 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error) {
 
 		go func() {
 			for subsystem := range w.Event {
+				// empty the explicit request channel
+				<-explicitChan
 				// Watch for player changes
 				if subsystem == "player" {
 					status, err := c.Status()
@@ -76,7 +92,11 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error) {
 						errorChan <- err
 					}
 
-					s := encodeStatus(status, song)
+					s, err := encodeStatus(status, song)
+					if err != nil {
+						errorChan <- err
+					}
+
 					// only playing tracks matter
 					if s.State == "play" {
 						automaticChan <- s
@@ -100,7 +120,10 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error) {
 					errorChan <- err
 				}
 
-				s := encodeStatus(status, song)
+				s, err := encodeStatus(status, song)
+				if err != nil {
+					errorChan <- err
+				}
 				explicitChan <- s
 			}
 		}()
