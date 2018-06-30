@@ -51,6 +51,7 @@ func getConfig() config {
 	return c
 }
 
+// call f with the passed status
 func callWithStatus(f func(p.Status), status p.Status) func() {
 	return func() {
 		f(status)
@@ -79,7 +80,7 @@ func main() {
 		if err != nil {
 			log.Println(err)
 		}
-		log.Println("listenbrainz:", r.Status+":", "Playing now:", s.Track)
+		log.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
 
 		// submit the track if the submission time has elapsed and if it's still the same track
 		time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second,
