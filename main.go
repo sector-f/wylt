@@ -70,11 +70,7 @@ func main() {
 		func(old p.Status) {
 			log.Println("mpd: Playing now:", current.Title, "by", current.Artist, "on", current.Album)
 
-			r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
-			if err != nil {
-				log.Println(err)
-			}
-			log.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
+			// post current track to listenbrainz
 			r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
 			if err != nil {
 				log.Println(err)
