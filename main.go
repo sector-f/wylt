@@ -16,9 +16,12 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	p "github.com/kori/libra/players"
@@ -35,59 +38,84 @@ type config struct {
 }
 
 // read configuration file and return a config struct
-func getConfig() config {
+func getConfig(path string) (config, error) {
 	// read config file
-	path := os.Getenv("XDG_CONFIG_HOME") + "/libra/config.toml"
 	configFile, err := ioutil.ReadFile(path)
 	if err != nil {
-		log.Fatalln(err)
+		return config{}, err
 	}
 
 	// parse config file and assign to a struct
 	var c config
 	if _, err := toml.Decode(string(configFile), &c); err != nil {
-		log.Fatalln("Config file not found.")
+		return config{}, errors.New("Config file not found.")
 	}
-	return c
+	return c, nil
+}
+
+// create a logger that will log both to stdout and the given file
+func createLogger(logroot string, name string) (*log.Logger, error) {
+	mlLogfile, err := os.Create(logroot + name)
+	if err != nil {
+		return nil, err
+	}
+
+	mw := io.MultiWriter(os.Stdout, mlLogfile)
+	return log.New(mw, "", log.LstdFlags), nil
 }
 
 func main() {
-	// get config info from $PATH
-	conf := getConfig()
+	configroot := os.Getenv("XDG_CONFIG_HOME") + "/libra/"
+	logroot := os.Getenv("XDG_CONFIG_HOME") + "/libra/log/"
 
-	// set up channels for automatic monitoring , explicit requests, and errors
-	mpdEvents, playingNow, errors := mpd.Watch(conf.Address)
+	// get config info from the path
+	conf, err := getConfig(configroot + "config.toml")
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// set up channels for automatic monitoring, explicit requests, and errors
+	mpdEvents, playingNow, errors, err := mpd.Watch(conf.Address)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// Create logger for mpd to listenbrainz events.
+	mlLogger, err := createLogger(logroot, "mpd-listenbrainz-"+strconv.FormatInt(time.Now().Unix(), 10))
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	// watch the errors channel
 	go func() {
 		for err := range errors {
-			log.Println(err)
+			mlLogger.Println(err)
 		}
 	}()
 
 	// watch the automatic events channel
-	for current := range mpdEvents {
-		func(old p.Status) {
-			log.Println("mpd: Playing now:", current.Title, "by", current.Artist, "on", current.Album)
+	for e := range mpdEvents {
+		func(current p.Status) {
+			mlLogger.Println("mpd: Playing now:", current.Title, "by", current.Artist, "on", current.Album)
 
 			// post current track to listenbrainz
 			r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
 			if err != nil {
 				log.Println(err)
 			}
-			log.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
+			mlLogger.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
 
 			// submit the track if the submission time has elapsed and if it's still the same track
 			time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second, func() {
 				new := <-playingNow
-				if old.Track == new.Track {
-					r, err := lb.SubmitSingle(lb.Track(old.Track), conf.Token)
+				if current.Track == new.Track {
+					r, err := lb.SubmitSingle(lb.Track(current.Track), conf.Token)
 					if err != nil {
-						log.Println(err)
+						mlLogger.Println(err)
 					}
-					log.Println("listenbrainz:", r.Status+":", "Single submission:", old.Track)
+					mlLogger.Println("listenbrainz:", r.Status+":", "Single submission:", current.Track)
 				}
 			})
-		}(current)
+		}(e)
 	}
 }

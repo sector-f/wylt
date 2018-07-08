@@ -47,28 +47,28 @@ func encodeStatus(status m.Attrs, song m.Attrs) (p.Status, error) {
 }
 
 // Watch monitors mpd for changes and posts the info to the channels.
-func Watch(addr string) (chan p.Status, chan p.Status, chan error) {
+func Watch(addr string) (chan p.Status, chan p.Status, chan error, error) {
 	// create channels to keep track of the current statuses
 	var automaticChan = make(chan p.Status)
 	var explicitChan = make(chan p.Status)
 	var errorChan = make(chan error)
 
+	// Connect to mpd as a client.
+	c, err := m.Dial("tcp", addr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// keep the connection alive
+	keepAlive(c)
+
+	// Create a watcher for its events
+	w, err := m.NewWatcher("tcp", addr, "")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	go func() {
-		// Connect to mpd as a client.
-		c, err := m.Dial("tcp", addr)
-		if err != nil {
-			errorChan <- err
-		}
-
-		// keep the connection alive
-		keepAlive(c)
-
-		// Create a watcher for its events
-		w, err := m.NewWatcher("tcp", addr, "")
-		if err != nil {
-			errorChan <- err
-		}
-
 		// Watch for mpd's errors
 		go func() {
 			for err := range w.Error {
@@ -87,18 +87,17 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error) {
 						errorChan <- err
 					}
 
-					song, err := c.CurrentSong()
-					if err != nil {
-						errorChan <- err
-					}
-
-					s, err := encodeStatus(status, song)
-					if err != nil {
-						errorChan <- err
-					}
-
 					// only playing tracks matter
-					if s.State == "play" {
+					if status["state"] == "play" {
+						song, err := c.CurrentSong()
+						if err != nil {
+							errorChan <- err
+						}
+
+						s, err := encodeStatus(status, song)
+						if err != nil {
+							errorChan <- err
+						}
 						automaticChan <- s
 					}
 				} else {
@@ -127,8 +126,7 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error) {
 				explicitChan <- s
 			}
 		}()
-
 	}()
 
-	return automaticChan, explicitChan, errorChan
+	return automaticChan, explicitChan, errorChan, nil
 }
