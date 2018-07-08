@@ -93,7 +93,6 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error, error) {
 						if err != nil {
 							errorChan <- err
 						}
-
 						s, err := encodeStatus(status, song)
 						if err != nil {
 							errorChan <- err
@@ -110,20 +109,22 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error, error) {
 		go func() {
 			for {
 				status, err := c.Status()
-				if err != nil {
-					errorChan <- err
-				}
+				if status["state"] == "play" {
+					if err != nil {
+						errorChan <- err
+					}
 
-				song, err := c.CurrentSong()
-				if err != nil {
-					errorChan <- err
-				}
+					song, err := c.CurrentSong()
+					if err != nil {
+						errorChan <- err
+					}
 
-				s, err := encodeStatus(status, song)
-				if err != nil {
-					errorChan <- err
+					s, err := encodeStatus(status, song)
+					if err != nil {
+						errorChan <- err
+					}
+					explicitChan <- s
 				}
-				explicitChan <- s
 			}
 		}()
 	}()

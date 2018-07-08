@@ -64,6 +64,30 @@ func createLogger(logroot string, name string) (*log.Logger, error) {
 	return log.New(mw, "", log.LstdFlags), nil
 }
 
+func postMPDToListenBrainz(current p.Status, playingNow chan p.Status, conf config, l *log.Logger) {
+	track := current.Title + " by " + current.Artist + " on " + current.Album
+	l.Println("mpd: Playing now:", track)
+
+	// post current track to listenbrainz
+	r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
+	if err != nil {
+		l.Fatalln(err)
+	}
+	l.Println("listenbrainz:", r.Status+":", "Playing now:", track)
+
+	// submit the track if the submission time has elapsed and if it's still the same track
+	time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second, func() {
+		new := <-playingNow
+		if current.Track == new.Track {
+			r, err := lb.SubmitSingle(lb.Track(current.Track), conf.Token)
+			if err != nil {
+				l.Fatalln(err)
+			}
+			l.Println("listenbrainz:", r.Status+":", "Single submission:", track)
+		}
+	})
+}
+
 func main() {
 	configroot := os.Getenv("XDG_CONFIG_HOME") + "/libra/"
 	logroot := os.Getenv("XDG_CONFIG_HOME") + "/libra/log/"
@@ -93,29 +117,14 @@ func main() {
 		}
 	}()
 
+	// get initial status.
+	initial := <-playingNow
+	postMPDToListenBrainz(initial, playingNow, conf, mlLogger)
+
 	// watch the automatic events channel
 	for e := range mpdEvents {
 		func(current p.Status) {
-			mlLogger.Println("mpd: Playing now:", current.Title, "by", current.Artist, "on", current.Album)
-
-			// post current track to listenbrainz
-			r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
-			if err != nil {
-				log.Println(err)
-			}
-			mlLogger.Println("listenbrainz:", r.Status+":", "Playing now:", current.Track)
-
-			// submit the track if the submission time has elapsed and if it's still the same track
-			time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second, func() {
-				new := <-playingNow
-				if current.Track == new.Track {
-					r, err := lb.SubmitSingle(lb.Track(current.Track), conf.Token)
-					if err != nil {
-						mlLogger.Println(err)
-					}
-					mlLogger.Println("listenbrainz:", r.Status+":", "Single submission:", current.Track)
-				}
-			})
+			postMPDToListenBrainz(current, playingNow, conf, mlLogger)
 		}(e)
 	}
 }
