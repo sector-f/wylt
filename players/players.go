@@ -5,6 +5,7 @@ type Track struct {
 	Artist string
 	Album  string
 }
+
 type CurrentStatus struct {
 	Duration int
 	Elapsed  int

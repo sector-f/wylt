@@ -79,7 +79,7 @@ func postMPDToListenBrainz(current p.Status, playingNow chan p.Status, conf conf
 	time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second, func() {
 		new := <-playingNow
 		if current.Track == new.Track {
-			r, err := lb.SubmitSingle(lb.Track(current.Track), conf.Token)
+			r, err := lb.SubmitSingle(lb.Track(current.Track), conf.Token, time.Now().Unix())
 			if err != nil {
 				l.Fatalln(err)
 			}
