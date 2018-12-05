@@ -56,12 +56,12 @@ func getConfig(path string) (config, error) {
 
 // create a logger that will log both to stdout and the given file
 func createLogger(logroot string, name string) (*log.Logger, error) {
-	mlLogfile, err := os.Create(logroot + name)
+	logfile, err := os.Create(logroot + name)
 	if err != nil {
 		return nil, err
 	}
 
-	mw := io.MultiWriter(os.Stdout, mlLogfile)
+	mw := io.MultiWriter(os.Stdout, logfile)
 	return log.New(mw, "", log.LstdFlags), nil
 }
 
