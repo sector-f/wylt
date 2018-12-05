@@ -47,7 +47,8 @@ func getConfig(path string) (config, error) {
 
 	// parse config file and assign to a struct
 	var c config
-	if _, err := toml.Decode(string(configFile), &c); err != nil {
+	_, err = toml.Decode(string(configFile), &c)
+	if err != nil {
 		return config{}, errors.New("Config file not found.")
 	}
 	return c, nil
