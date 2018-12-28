@@ -50,7 +50,7 @@ func encodeStatus(status m.Attrs, song m.Attrs) (p.Status, error) {
 func Watch(addr string) (chan p.Status, chan p.Status, chan error, error) {
 	// create channels to keep track of the current statuses
 	var automaticChan = make(chan p.Status)
-	var explicitChan = make(chan p.Status)
+	var manualChan = make(chan p.Status)
 	var errorChan = make(chan error)
 
 	// Connect to mpd as a client.
@@ -68,66 +68,66 @@ func Watch(addr string) (chan p.Status, chan p.Status, chan error, error) {
 		return nil, nil, nil, err
 	}
 
+	// Watch for mpd's errors
 	go func() {
-		// Watch for mpd's errors
-		go func() {
-			for err := range w.Error {
-				errorChan <- err
-			}
-		}()
+		for err := range w.Error {
+			errorChan <- err
+		}
+	}()
 
-		go func() {
-			for subsystem := range w.Event {
-				// empty the explicit request channel
-				<-explicitChan
-				// Watch for player changes
-				if subsystem == "player" {
-					status, err := c.Status()
-					if err != nil {
-						errorChan <- err
-					}
-
-					// only playing tracks matter
-					if status["state"] == "play" {
-						song, err := c.CurrentSong()
-						if err != nil {
-							errorChan <- err
-						}
-						s, err := encodeStatus(status, song)
-						if err != nil {
-							errorChan <- err
-						}
-						automaticChan <- s
-					}
-				} else {
-					// other kinds of events aren't handled, so empty the channel
-					<-w.Event
-				}
-			}
-		}()
-
-		go func() {
-			for {
+	// Watch mpd's events
+	go func() {
+		for subsystem := range w.Event {
+			// empty the manual request channel, because the track has changed
+			<-manualChan
+			// Watch for player changes
+			if subsystem == "player" {
 				status, err := c.Status()
-				if status["state"] == "play" {
-					if err != nil {
-						errorChan <- err
-					}
+				if err != nil {
+					errorChan <- err
+				}
 
+				// only playing tracks matter
+				if status["state"] == "play" {
 					song, err := c.CurrentSong()
 					if err != nil {
 						errorChan <- err
 					}
-
 					s, err := encodeStatus(status, song)
 					if err != nil {
 						errorChan <- err
 					}
-					explicitChan <- s
+					automaticChan <- s
 				}
+			} else {
+				// other kinds of events aren't handled, so empty the channel
+				<-w.Event
 			}
-		}()
+		}
 	}()
 
-	return automaticChan, explicitChan, errorChan, nil
+	// Watch for manual requests
+	go func() {
+		for {
+			status, err := c.Status()
+			if status["state"] == "play" {
+				if err != nil {
+					errorChan <- err
+				}
+
+				song, err := c.CurrentSong()
+				if err != nil {
+					errorChan <- err
+				}
+
+				s, err := encodeStatus(status, song)
+				if err != nil {
+					errorChan <- err
+				}
+				manualChan <- s
+			}
+		}
+	}()
+
+	return automaticChan, manualChan, errorChan, nil
 }

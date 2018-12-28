@@ -1,2 +1,2 @@
-Address = "127.0.0.1:6600"
-Token = ""
+MPDAddress = "127.0.0.1:6600"
+ListenbrainzToken = ""

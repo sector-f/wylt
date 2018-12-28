@@ -33,8 +33,8 @@ import (
 
 // struct for unmarshalling the config
 type config struct {
-	Address string
-	Token   string
+	MPDAddress        string
+	ListenbrainzToken string
 }
 
 // read configuration file and return a config struct
@@ -56,7 +56,7 @@ func getConfig(path string) (config, error) {
 
 // create a logger that will log both to stdout and the given file
 func createLogger(logroot string, name string) (*log.Logger, error) {
-	logfile, err := os.Create(logroot + name)
+	logfile, err := os.Create(logroot + "/" + name)
 	if err != nil {
 		return nil, err
 	}
@@ -70,17 +70,22 @@ func postMPDToListenBrainz(current p.Status, playingNow chan p.Status, conf conf
 	l.Println("mpd: Playing now:", track)
 
 	// post current track to listenbrainz
-	r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.Token)
+	r, err := lb.SubmitPlayingNow(lb.Track(current.Track), conf.ListenbrainzToken)
 	if err != nil {
 		l.Fatalln(err)
 	}
 	l.Println("listenbrainz:", r.Status+":", "Playing now:", track)
 
+	st, err := lb.GetSubmissionTime(current.Duration)
+	if err != nil {
+		l.Fatalln(err)
+	}
+
 	// submit the track if the submission time has elapsed and if it's still the same track
-	time.AfterFunc(time.Duration(lb.GetSubmissionTime(current.Duration))*time.Second, func() {
+	time.AfterFunc(time.Duration(st)*time.Second, func() {
 		new := <-playingNow
 		if current.Track == new.Track {
-			r, err := lb.SubmitSingle(lb.Track(current.Track), conf.Token, time.Now().Unix())
+			r, err := lb.SubmitSingle(lb.Track(current.Track), conf.ListenbrainzToken, time.Now().Unix())
 			if err != nil {
 				l.Fatalln(err)
 			}
@@ -90,17 +95,17 @@ func postMPDToListenBrainz(current p.Status, playingNow chan p.Status, conf conf
 }
 
 func main() {
-	configroot := os.Getenv("XDG_CONFIG_HOME") + "/libra/"
-	logroot := os.Getenv("XDG_CONFIG_HOME") + "/libra/log/"
+	configroot := os.Getenv("XDG_CONFIG_HOME") + "/libra"
+	logroot := configroot + "/log"
 
 	// get config info from the path
-	conf, err := getConfig(configroot + "config.toml")
+	conf, err := getConfig(configroot + "/config.toml")
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	// set up channels for automatic monitoring, explicit requests, and errors
-	mpdEvents, playingNow, errors, err := mpd.Watch(conf.Address)
+	mpdEvents, playingNow, errors, err := mpd.Watch(conf.MPDAddress)
 	if err != nil {
 		log.Fatalln(err)
 	}
