@@ -95,7 +95,12 @@ func postMPDToListenBrainz(current p.Status, playingNow chan p.Status, conf conf
 }
 
 func main() {
-	configroot := os.Getenv("XDG_CONFIG_HOME") + "/libra"
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		configHome = os.Getenv("HOME") + "/.config"
+	}
+
+	configroot := configHome + "/libra"
 	logroot := configroot + "/log"
 
 	// get config info from the path
