@@ -81,96 +81,6 @@ func encodeStatus(status m.Attrs, song m.Attrs) (Status, error) {
 	}, nil
 }
 
-// Watch monitors mpd for changes and posts the info to the channels.
-func Watch(addr string) (chan Status, chan Status, chan error, error) {
-	// create channels to keep track of the current statuses
-	var automaticChan = make(chan Status)
-	var manualChan = make(chan Status)
-	var errorChan = make(chan error)
-
-	// Connect to mpd as a client.
-	c, err := m.Dial("tcp", addr)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// keep the connection alive
-	go func() {
-		for range time.Tick(30 * time.Second) {
-			c.Ping()
-		}
-	}()
-
-	// Create a watcher for its events
-	w, err := m.NewWatcher("tcp", addr, "")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// Watch for mpd's errors
-	go func() {
-		for err := range w.Error {
-			errorChan <- err
-		}
-	}()
-
-	// Watch mpd's events
-	go func() {
-		for subsystem := range w.Event {
-			// empty the manual request channel, because the track has changed
-			<-manualChan
-			// Watch for player changes
-			if subsystem == "player" {
-				status, err := c.Status()
-				if err != nil {
-					errorChan <- err
-				}
-
-				// only playing tracks matter
-				if status["state"] == "play" {
-					song, err := c.CurrentSong()
-					if err != nil {
-						errorChan <- err
-					}
-					s, err := encodeStatus(status, song)
-					if err != nil {
-						errorChan <- err
-					}
-					automaticChan <- s
-				}
-			} else {
-				// other kinds of events aren't handled, so empty the channel
-				<-w.Event
-			}
-		}
-	}()
-
-	// Watch for manual requests
-	go func() {
-		for {
-			status, err := c.Status()
-			if status["state"] == "play" {
-				if err != nil {
-					errorChan <- err
-				}
-
-				song, err := c.CurrentSong()
-				if err != nil {
-					errorChan <- err
-				}
-
-				s, err := encodeStatus(status, song)
-				if err != nil {
-					errorChan <- err
-				}
-				manualChan <- s
-			}
-		}
-	}()
-
-	return automaticChan, manualChan, errorChan, nil
-}
-
 // read configuration file and return a config struct
 func getConfig(path string) (config, error) {
 	// read config file
@@ -243,10 +153,76 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	// set up channels for automatic monitoring, explicit requests, and errors
-	mpdEvents, playingNow, errors, err := Watch(conf.MPDAddress)
+	// Connect to mpd as a client.
+	c, err := m.Dial("tcp", addr)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, nil, nil, err
+	}
+
+	// keep the connection alive
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			c.Ping()
+		}
+	}()
+
+	// Create a watcher for its events
+	w, err := m.NewWatcher("tcp", addr, "")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Watch for mpd's errors
+	go func() {
+		for err := range w.Error {
+			l.Println("libra:", err)
+		}
+	}()
+
+	// Watch mpd's events
+	go func() {
+		for subsystem := range w.Event {
+			// Watch for player changes
+			if subsystem == "player" {
+				status, err := c.Status()
+				if err != nil {
+					l.Println("libra:", err)
+				}
+
+				// only playing tracks matter
+				if status["state"] == "play" {
+					song, err := c.CurrentSong()
+					if err != nil {
+						l.Println("libra:", err)
+					}
+					s, err := encodeStatus(status, song)
+					if err != nil {
+						l.Println("libra:", err)
+					}
+				}
+			} else {
+				// other kinds of events aren't handled, so empty the channel
+				<-w.Event
+			}
+		}
+	}()
+
+	// Watch for manual requests
+	status, err := c.Status()
+	if status["state"] == "play" {
+		if err != nil {
+			l.Println("libra:", err)
+		}
+
+		song, err := c.CurrentSong()
+		if err != nil {
+			l.Println("libra:", err)
+		}
+
+		s, err := encodeStatus(status, song)
+		if err != nil {
+			l.Println("libra:", err)
+		}
 	}
 
 	// Create logger for mpd to listenbrainz events.
