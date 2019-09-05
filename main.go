@@ -20,12 +20,10 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"time"
-
-	p "github.com/kori/libra/players"
-	"github.com/kori/libra/players/mpd"
 
 	"github.com/BurntSushi/toml"
 	lb "github.com/kori/go-listenbrainz"
@@ -35,6 +33,142 @@ import (
 type config struct {
 	MPDAddress        string
 	ListenbrainzToken string
+}
+
+type Track struct {
+	Title  string
+	Artist string
+	Album  string
+}
+
+type CurrentStatus struct {
+	Duration int
+	Elapsed  int
+	State    string
+}
+
+// Status is a struct for encoding the current state of the player
+type Status struct {
+	Track
+	CurrentStatus
+}
+
+// encodeStatus gets the most relevant info from the passed Attrs struct
+func encodeStatus(status m.Attrs, song m.Attrs) (Status, error) {
+	fe, err := strconv.ParseFloat(status["elapsed"], 64)
+	if err != nil {
+		return Status{}, err
+	}
+	elapsed := int(math.Floor(fe))
+
+	de, err := strconv.ParseFloat(status["duration"], 64)
+	if err != nil {
+		return Status{}, err
+	}
+	duration := int(math.Floor(de))
+
+	return Status{
+		Track: Track{
+			Title:  song["Title"],
+			Artist: song["Artist"],
+			Album:  song["Album"],
+		},
+		CurrentStatus: CurrentStatus{
+			Duration: duration,
+			Elapsed:  elapsed,
+			State:    status["state"],
+		},
+	}, nil
+}
+
+// Watch monitors mpd for changes and posts the info to the channels.
+func Watch(addr string) (chan Status, chan Status, chan error, error) {
+	// create channels to keep track of the current statuses
+	var automaticChan = make(chan Status)
+	var manualChan = make(chan Status)
+	var errorChan = make(chan error)
+
+	// Connect to mpd as a client.
+	c, err := m.Dial("tcp", addr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// keep the connection alive
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			c.Ping()
+		}
+	}()
+
+	// Create a watcher for its events
+	w, err := m.NewWatcher("tcp", addr, "")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Watch for mpd's errors
+	go func() {
+		for err := range w.Error {
+			errorChan <- err
+		}
+	}()
+
+	// Watch mpd's events
+	go func() {
+		for subsystem := range w.Event {
+			// empty the manual request channel, because the track has changed
+			<-manualChan
+			// Watch for player changes
+			if subsystem == "player" {
+				status, err := c.Status()
+				if err != nil {
+					errorChan <- err
+				}
+
+				// only playing tracks matter
+				if status["state"] == "play" {
+					song, err := c.CurrentSong()
+					if err != nil {
+						errorChan <- err
+					}
+					s, err := encodeStatus(status, song)
+					if err != nil {
+						errorChan <- err
+					}
+					automaticChan <- s
+				}
+			} else {
+				// other kinds of events aren't handled, so empty the channel
+				<-w.Event
+			}
+		}
+	}()
+
+	// Watch for manual requests
+	go func() {
+		for {
+			status, err := c.Status()
+			if status["state"] == "play" {
+				if err != nil {
+					errorChan <- err
+				}
+
+				song, err := c.CurrentSong()
+				if err != nil {
+					errorChan <- err
+				}
+
+				s, err := encodeStatus(status, song)
+				if err != nil {
+					errorChan <- err
+				}
+				manualChan <- s
+			}
+		}
+	}()
+
+	return automaticChan, manualChan, errorChan, nil
 }
 
 // read configuration file and return a config struct
@@ -65,7 +199,7 @@ func createLogger(logroot string, name string) (*log.Logger, error) {
 	return log.New(mw, "", log.LstdFlags), nil
 }
 
-func postMPDToListenBrainz(current p.Status, playingNow chan p.Status, conf config, l *log.Logger) {
+func postMPDToListenBrainz(current Status, playingNow chan Status, conf config, l *log.Logger) {
 	track := current.Title + " by " + current.Artist + " on " + current.Album
 	l.Println("mpd: Playing now:", track)
 
@@ -110,7 +244,7 @@ func main() {
 	}
 
 	// set up channels for automatic monitoring, explicit requests, and errors
-	mpdEvents, playingNow, errors, err := mpd.Watch(conf.MPDAddress)
+	mpdEvents, playingNow, errors, err := Watch(conf.MPDAddress)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -134,7 +268,7 @@ func main() {
 
 	// watch the automatic events channel
 	for e := range mpdEvents {
-		func(current p.Status) {
+		func(current Status) {
 			postMPDToListenBrainz(current, playingNow, conf, mlLogger)
 		}(e)
 	}
