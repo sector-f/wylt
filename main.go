@@ -98,18 +98,44 @@ func getConfig(path string) (config, error) {
 	return c, nil
 }
 
-// create a logger that will log both to stdout and the given file
-func createLogger(logroot string, name string) (*log.Logger, error) {
-	logfile, err := os.Create(logroot + "/" + name)
+func main() {
+	logfile, err := os.Create(logroot + "/" + "libra-" + strconv.FormatInt(time.Now().Unix(), 10))
 	if err != nil {
-		return nil, err
+		fmt.Fatalln(err)
 	}
 
 	mw := io.MultiWriter(os.Stdout, logfile)
-	return log.New(mw, "", log.LstdFlags), nil
-}
+	// Create a logger for libra.
+	l, err := log.New(mw, "", log.LstdFlags)
+	if err != nil {
+		fmt.Fatalln(err)
+	}
 
-func postMPDToListenBrainz(current Status, playingNow chan Status, conf config, l *log.Logger) {
+	// Set config home according to XDG standards.
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		configHome = os.Getenv("HOME") + "/.config"
+	}
+
+	// Create subdirectories.
+	configroot := configHome + "/libra"
+	logroot := configroot + "/log"
+
+	// get config info from the path
+	conf, err := getConfig(configroot + "/config.toml")
+	if err != nil {
+		l.Fatalln(err)
+	}
+
+	// watch the errors channel
+	go func() {
+		for err := range w.Event {
+			l.Println(err)
+		}
+	}()
+
+	// get initial status.
+	initial := <-playingNow
 	track := current.Title + " by " + current.Artist + " on " + current.Album
 	l.Println("mpd: Playing now:", track)
 
@@ -136,27 +162,12 @@ func postMPDToListenBrainz(current Status, playingNow chan Status, conf config, 
 			l.Println("listenbrainz:", r.Status+":", "Single submission:", track)
 		}
 	})
-}
-
-func main() {
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	if configHome == "" {
-		configHome = os.Getenv("HOME") + "/.config"
-	}
-
-	configroot := configHome + "/libra"
-	logroot := configroot + "/log"
-
-	// get config info from the path
-	conf, err := getConfig(configroot + "/config.toml")
-	if err != nil {
-		log.Fatalln(err)
-	}
 
 	// Connect to mpd as a client.
 	c, err := m.Dial("tcp", addr)
 	if err != nil {
-		return nil, nil, nil, err
+		l.Fatalln("libra: Couldn't connect to mpd.")
+		l.Fatalln("libra:", err)
 	}
 
 	// keep the connection alive
@@ -169,7 +180,7 @@ func main() {
 	// Create a watcher for its events
 	w, err := m.NewWatcher("tcp", addr, "")
 	if err != nil {
-		return nil, nil, nil, err
+		l.Fatalln("mpd: watcher:", err)
 	}
 
 	// Watch for mpd's errors
@@ -225,27 +236,4 @@ func main() {
 		}
 	}
 
-	// Create logger for mpd to listenbrainz events.
-	mlLogger, err := createLogger(logroot, "mpd-listenbrainz-"+strconv.FormatInt(time.Now().Unix(), 10))
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	// watch the errors channel
-	go func() {
-		for err := range errors {
-			mlLogger.Println(err)
-		}
-	}()
-
-	// get initial status.
-	initial := <-playingNow
-	postMPDToListenBrainz(initial, playingNow, conf, mlLogger)
-
-	// watch the automatic events channel
-	for e := range mpdEvents {
-		func(current Status) {
-			postMPDToListenBrainz(current, playingNow, conf, mlLogger)
-		}(e)
-	}
 }
