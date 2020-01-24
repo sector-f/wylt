@@ -86,13 +86,18 @@ func main() {
 	for _, p := range ps {
 		for _, t := range ts {
 			playerLog, errs := p.Subscribe()
-			for e := range errs {
-				logger.Println(e)
-			}
+			go func() {
+				for e := range errs {
+					logger.Println(e)
+				}
+			}()
+
 			for cur := range playerLog {
-				fmt.Println("now playing:", cur.Track.Title, "by", cur.Track.Artist)
-				t.SubmitPlayingNow(cur.Track)
-				go createTimer(p, t, cur)
+				go func(cur playerStatus) {
+					fmt.Println("now playing:", cur.Track.Title, "by", cur.Track.Artist)
+					t.SubmitPlayingNow(cur.Track)
+					createTimer(p, t, cur)
+				}(cur)
 			}
 		}
 	}
