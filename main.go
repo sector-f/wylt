@@ -88,7 +88,9 @@ func main() {
 			playerLog, errs := p.Subscribe()
 			go func() {
 				for e := range errs {
-					logger.Println(e)
+					// player errors are bound to fill up, should the connection be lost.
+					// TODO: find a better way to deal with player error logs
+					log.Println(e)
 				}
 			}()
 
