@@ -24,7 +24,8 @@ type playerStatus struct {
 
 // mpd encodes information about what MPD instance Wylt will connect to.
 type mpd struct {
-	Address string
+	Address  string
+	Password string
 }
 
 // Subscribe will receive information about the player's status, and any errors.
@@ -34,7 +35,8 @@ func (session *mpd) Subscribe() (chan playerStatus, chan error) {
 	errorChannel := make(chan error)
 
 	// Connect to mpd as a client.
-	c, err := m.Dial("tcp", session.Address)
+	// If the password is empty, a regular mpd.Dial command will be issued.
+	c, err := m.DialAuthenticated("tcp", session.Address, session.Password)
 	if err != nil {
 		errorChannel <- err
 	}
