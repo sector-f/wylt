@@ -85,9 +85,9 @@ func main() {
 
 	for _, p := range ps {
 		for _, t := range ts {
-			playerLog, err := p.Subscribe()
-			if err != nil {
-				logger.Println(err)
+			playerLog, errs := p.Subscribe()
+			for e := range errs {
+				logger.Println(e)
 			}
 			for cur := range playerLog {
 				fmt.Println("now playing:", cur.Track.Title, "by", cur.Track.Artist)
