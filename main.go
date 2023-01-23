@@ -88,25 +88,25 @@ func main() {
 		for _, t := range ts {
 			wg.Add(1)
 
-			go func(t Target) {
+			go func(p Player, t Target) {
 				defer wg.Done()
 
 				playerLog, errs := p.Subscribe()
 				for {
 					select {
 					case cur := <-playerLog:
-						go func(t Target) {
-							logger.Printf("now playing: %s by %s\n", cur.Track.Title, cur.Track.Artist)
-							t.SubmitPlayingNow(cur.Track)
-							createTimer(p, t, cur)
-						}(t)
+						go func(p Player, t Target, status playerStatus) {
+							logger.Printf("now playing: %s by %s\n", status.Track.Title, status.Track.Artist)
+							t.SubmitPlayingNow(status.Track)
+							createTimer(p, t, status)
+						}(p, t, cur)
 					case e := <-errs:
 						// player errors are bound to fill up, should the connection be lost.
 						// TODO: find a better way to deal with player error logs
 						logger.Println(e)
 					}
 				}
-			}(t)
+			}(p, t)
 		}
 	}
 
