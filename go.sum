@@ -1,0 +1,8 @@
+github.com/BurntSushi/toml v1.2.1 h1:9F2/+DoOYIOksmaJFPw1tGFy1eDnIJXg+UHjuD8lTak=
+github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
+github.com/fhs/gompd v1.0.1 h1:kBcAhjnAPJQAylZXR0TeH+d2vpjawXlTtKYguqNlF4A=
+github.com/fhs/gompd v1.0.1/go.mod h1:b219/mNa9PvRqvkUip51b23hGL3iX4d4q3gNXdtrD04=
+github.com/google/go-cmp v0.5.9 h1:O2Tfq5qg4qc4AmwVlvv0oLiVAGB7enBSJ2x2DqQFi38=
+github.com/google/go-cmp v0.5.9/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
+github.com/kori/go-listenbrainz v0.0.0-20200124210327-42996d006152 h1:F2td+RG6UJS9+I8BpNYHWzVzMh6vxYuApgQbfT/3AnM=
+github.com/kori/go-listenbrainz v0.0.0-20200124210327-42996d006152/go.mod h1:PNfWDUuBDmIzocT4HwPH+MRK+L/7/lDdLy9hkTPM6+Y=
