@@ -17,13 +17,13 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -83,26 +83,34 @@ func main() {
 	ts := Targets{&listenbrainz{Token: config.ListenbrainzToken}}
 	ps := Players{&mpd{Address: config.MPDAddress}}
 
+	var wg sync.WaitGroup
 	for _, p := range ps {
 		for _, t := range ts {
-			playerLog, errs := p.Subscribe()
-			go func() {
-				for e := range errs {
-					// player errors are bound to fill up, should the connection be lost.
-					// TODO: find a better way to deal with player error logs
-					log.Println(e)
-				}
-			}()
+			wg.Add(1)
 
-			for cur := range playerLog {
-				go func(cur playerStatus) {
-					fmt.Println("now playing:", cur.Track.Title, "by", cur.Track.Artist)
-					t.SubmitPlayingNow(cur.Track)
-					createTimer(p, t, cur)
-				}(cur)
-			}
+			go func(p Player, t Target) {
+				defer wg.Done()
+
+				playerLog, errs := p.Subscribe()
+				for {
+					select {
+					case cur := <-playerLog:
+						go func(p Player, t Target, status playerStatus) {
+							logger.Printf("now playing: %s by %s\n", status.Track.Title, status.Track.Artist)
+							t.SubmitPlayingNow(status.Track)
+							createTimer(p, t, status)
+						}(p, t, cur)
+					case e := <-errs:
+						// player errors are bound to fill up, should the connection be lost.
+						// TODO: find a better way to deal with player error logs
+						logger.Println(e)
+					}
+				}
+			}(p, t)
 		}
 	}
+
+	wg.Wait()
 }
 
 // create a timer that will return whenever the submission time is elapsed
