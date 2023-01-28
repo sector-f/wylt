@@ -125,7 +125,6 @@ func main() {
 					// For each track change, create the timer that will handle submitting listens.
 					case cur := <-playerLog:
 						go func(p Player, t Target, track Track) {
-							// TODO: at the time of this commit, this is printing twice. Check Subscribe()
 							logger.Printf("[PLAYER]: now playing: %s by %s\n", track.Title, track.Artist)
 							t.SubmitPlayingNow(track)
 							logger.Printf("[TARGET] %s: started timer for: %s by %s\n", t.Name(), track.Title, track.Artist)
