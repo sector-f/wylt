@@ -18,7 +18,6 @@ package main
 import (
 	"errors"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -39,7 +38,7 @@ type config struct {
 // read configuration file and return a config struct
 func newConfig(path string) (config, error) {
 	// read config file
-	configFile, err := ioutil.ReadFile(path)
+	configFile, err := os.ReadFile(path)
 	if err != nil {
 		return config{}, err
 	}
