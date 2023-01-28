@@ -34,22 +34,6 @@ type config struct {
 	ListenbrainzToken string
 }
 
-// read configuration file and return a config struct
-func newConfig(path string) (c config, err error) {
-	// read config file
-	configFile, err := os.ReadFile(path)
-	if err != nil {
-		return config{}, err
-	}
-
-	// parse config file and assign to a struct
-	_, err = toml.Decode(string(configFile), &c)
-	if err != nil {
-		return config{}, err
-	}
-	return c, nil
-}
-
 // function to create a logger to both stdout and a *log.Logger
 func newLogger(path string) *log.Logger {
 	// open the logfile for appending or create it if it doesnt exist
@@ -91,7 +75,12 @@ func main() {
 	}
 
 	configPath := filepath.Join(configRoot, "config.toml")
-	config, err := newConfig(configPath)
+
+	var conf config
+	_, err := toml.DecodeFile(configPath, &conf)
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	logPath := filepath.Join(configRoot, "logs", "wylt.log")
 	logger := newLogger(logPath)
@@ -99,12 +88,12 @@ func main() {
 		logger.Fatalln(err)
 	}
 
-	mpdSession, err := NewMPD(config.MPDAddress, config.MPDPassword)
+	mpdSession, err := NewMPD(conf.MPDAddress, conf.MPDPassword)
 	if err != nil {
 		logger.Fatalln(err)
 	}
 
-	ts := Targets{&listenbrainz{Token: config.ListenbrainzToken}}
+	ts := Targets{&listenbrainz{Token: conf.ListenbrainzToken}}
 	ps := Players{&mpdSession}
 
 	var wg sync.WaitGroup
