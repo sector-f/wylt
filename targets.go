@@ -24,22 +24,26 @@ type listenbrainz struct {
 	Token string
 }
 
-func (session *listenbrainz) SubmitPlayingNow(t Track) (*http.Response, error) {
-	lbt := lb.Track{
-		Artist: t.Artist,
-		Album:  t.Album,
-		Title:  t.Title,
-	}
-	return lb.SubmitPlayingNow(lb.Track(lbt), session.Token)
+func (target *listenbrainz) Name() string {
+	return "listenbrainz"
 }
 
-func (session *listenbrainz) SubmitListen(t Track) (*http.Response, error) {
+func (target *listenbrainz) SubmitPlayingNow(t Track) (*http.Response, error) {
 	lbt := lb.Track{
 		Artist: t.Artist,
 		Album:  t.Album,
 		Title:  t.Title,
 	}
-	return lb.SubmitSingle(lb.Track(lbt), session.Token, time.Now().Unix())
+	return lb.SubmitPlayingNow(lb.Track(lbt), target.Token)
+}
+
+func (target *listenbrainz) SubmitListen(t Track) (*http.Response, error) {
+	lbt := lb.Track{
+		Artist: t.Artist,
+		Album:  t.Album,
+		Title:  t.Title,
+	}
+	return lb.SubmitSingle(lb.Track(lbt), target.Token, time.Now().Unix())
 }
 
 func (session *listenbrainz) GetSubmissionTime(d time.Duration) (time.Duration, error) {

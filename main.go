@@ -16,7 +16,6 @@
 package main
 
 import (
-	"errors"
 	"io"
 	"log"
 	"os"
@@ -36,7 +35,7 @@ type config struct {
 }
 
 // read configuration file and return a config struct
-func newConfig(path string) (config, error) {
+func newConfig(path string) (c config, err error) {
 	// read config file
 	configFile, err := os.ReadFile(path)
 	if err != nil {
@@ -44,10 +43,9 @@ func newConfig(path string) (config, error) {
 	}
 
 	// parse config file and assign to a struct
-	var c config
 	_, err = toml.Decode(string(configFile), &c)
 	if err != nil {
-		return config{}, errors.New("config file not found")
+		return config{}, err
 	}
 	return c, nil
 }
