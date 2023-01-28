@@ -68,11 +68,22 @@ func (m *mpd) Subscribe() (chan Track, chan error) {
 		for subsystem := range m.Watcher.Event {
 			// Watch for player changes
 			if subsystem == "player" {
-				t, err := m.NowPlaying()
+				status, err := m.Client.Status()
 				if err != nil {
 					errorChannel <- err
 				}
-				trackChannel <- t
+
+				// We need to call Status separately because the event watcher prints
+				// out an event when the track starts, and when it starts playing and
+				// also when it pauses, so that's too much noise for our purposes
+				if status["state"] == "play" {
+					t, err := m.NowPlaying()
+					if err != nil {
+						errorChannel <- err
+					}
+
+					trackChannel <- t
+				}
 
 			} else {
 				// other kinds of events aren't handled, so empty the channel
@@ -85,20 +96,17 @@ func (m *mpd) Subscribe() (chan Track, chan error) {
 }
 
 func (m *mpd) NowPlaying() (Track, error) {
+	song, err := m.Client.CurrentSong()
+	if err != nil {
+		return Track{}, nil
+	}
+
 	status, err := m.Client.Status()
 	if err != nil {
 		return Track{}, nil
-
 	}
 
 	d, err := strconv.ParseFloat(status["duration"], 64)
-	if err != nil {
-		return Track{}, nil
-	}
-
-	duration := time.Duration(int(math.Floor(d))) * time.Second
-
-	song, err := m.Client.CurrentSong()
 	if err != nil {
 		return Track{}, nil
 	}
@@ -107,7 +115,7 @@ func (m *mpd) NowPlaying() (Track, error) {
 		Title:    song["Title"],
 		Artist:   song["Artist"],
 		Album:    song["Album"],
-		Duration: duration,
+		Duration: time.Duration(int(math.Floor(d))) * time.Second,
 	}, nil
 
 }
