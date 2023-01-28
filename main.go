@@ -1,4 +1,4 @@
-// Copyright (c) 2020 Luiz de Milon (kori)
+// Copyright (c) 2023 Luiz de Milon (kori)
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,9 +20,8 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
-	"strconv"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -33,114 +32,12 @@ import (
 // struct for unmarshalling the config
 type config struct {
 	MPDAddress        string
+	MPDPassword       string
 	ListenbrainzToken string
 }
 
-// Player is an interface that encodes what works as a source of tracks.
-// In this case, it could be any Subscribe() function that returns a Status
-type Player interface {
-	// Subscribe will receive information about the player's status, and any errors.
-	Subscribe() (chan playerStatus, chan error)
-	// NowPlaying checks what track is playing.
-	NowPlaying() (Track, error)
-}
-
-// Players is the array where information is going to be collected from.
-type Players []Player
-
-// Target is an interface that encodes what works as a target.
-// In this case, it can be anything that has a Publish() function that returns a http response.
-type Target interface {
-	// SubmitPlayingNow wraps a target's "playing now" function. (It's used in last.fm, libre.fm, and listenbrainz.)
-	SubmitPlayingNow(Track) (*http.Response, error)
-	// SubmitListen says you've listened to a track, according to a Target's parameters on what counts as a listen.
-	SubmitListen(Track) (*http.Response, error)
-	// GetSubmissionTime says when a listen should be submitted.
-	GetSubmissionTime(int) (int, error)
-}
-
-// Targets is an array of Target, which means the Router can send information to multiple Targets.
-type Targets []Target
-
-func main() {
-	// Set config home according to XDG standards.
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	if configHome == "" {
-		configHome = os.Getenv("HOME") + "/.config"
-	}
-	// Create subdirectories.
-	configroot := configHome + "/wylt"
-	logroot := configroot + "/logs"
-
-	logger := createLogger(logroot + "/" + "wylt-" + strconv.FormatInt(time.Now().Unix(), 10))
-
-	// get config info from the path
-	config, err := getConfig(configroot + "/config.toml")
-	if err != nil {
-		logger.Fatalln(err)
-	}
-
-	ts := Targets{&listenbrainz{Token: config.ListenbrainzToken}}
-	ps := Players{&mpd{Address: config.MPDAddress}}
-
-	var wg sync.WaitGroup
-	for _, p := range ps {
-		for _, t := range ts {
-			wg.Add(1)
-
-			go func(p Player, t Target) {
-				defer wg.Done()
-
-				playerLog, errs := p.Subscribe()
-				for {
-					select {
-					case cur := <-playerLog:
-						go func(p Player, t Target, status playerStatus) {
-							logger.Printf("now playing: %s by %s\n", status.Track.Title, status.Track.Artist)
-							t.SubmitPlayingNow(status.Track)
-							createTimer(p, t, status)
-						}(p, t, cur)
-					case e := <-errs:
-						// player errors are bound to fill up, should the connection be lost.
-						// TODO: find a better way to deal with player error logs
-						logger.Println(e)
-					}
-				}
-			}(p, t)
-		}
-	}
-
-	wg.Wait()
-}
-
-// create a timer that will return whenever the submission time is elapsed
-func createTimer(p Player, t Target, ps playerStatus) *time.Timer {
-	// get submission time for the given track
-	// TODO: whenever I deal with concurrent logging, log this error too
-	st, _ := t.GetSubmissionTime(ps.Duration)
-
-	return time.AfterFunc(time.Duration(st)*time.Second, func() {
-		cur, _ := p.NowPlaying()
-		// Is the same track still playing?
-		if cmp.Equal(ps.Track, cur) {
-			t.SubmitListen(ps.Track)
-		}
-	})
-}
-
-// function to create a logger to both stdout and a *log.Logger
-func createLogger(path string) *log.Logger {
-	logfile, err := os.Create(path)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	mw := io.MultiWriter(os.Stdout, logfile)
-	return log.New(mw, "", log.LstdFlags)
-}
-
 // read configuration file and return a config struct
-func getConfig(path string) (config, error) {
+func newConfig(path string) (config, error) {
 	// read config file
 	configFile, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -154,4 +51,90 @@ func getConfig(path string) (config, error) {
 		return config{}, errors.New("config file not found")
 	}
 	return c, nil
+}
+
+// function to create a logger to both stdout and a *log.Logger
+func newLogger(path string) *log.Logger {
+	// open the logfile for appending or create it if it doesnt exist
+	logfile, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	mw := io.MultiWriter(os.Stdout, logfile)
+	return log.New(mw, "", log.LstdFlags)
+}
+
+// create a timer that will return whenever the submission time is elapsed
+func newTimer(p Player, t Target, track Track) *time.Timer {
+	// TODO: whenever I deal with concurrent logging, log these errors too
+	st, _ := t.GetSubmissionTime(track.Duration)
+
+	np, _ := p.NowPlaying()
+
+	return time.AfterFunc(time.Duration(st)*time.Second, func() {
+		if cmp.Equal(track, np) {
+			t.SubmitListen(track)
+		}
+	})
+}
+
+func main() {
+	// Set config root according to XDG standards.
+	configRoot := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "wylt")
+	if configRoot == "" {
+		configRoot = filepath.Join(os.Getenv("HOME"), ".config", "wylt")
+	}
+
+	configPath := filepath.Join(configRoot, "config.toml")
+	config, err := newConfig(configPath)
+
+	logPath := filepath.Join(configRoot, "logs", "wylt.log")
+	logger := newLogger(logPath)
+	if err != nil {
+		logger.Fatalln(err)
+	}
+
+	mpdSession, err := NewMPD(config.MPDAddress, config.MPDPassword)
+	if err != nil {
+		logger.Fatalln(err)
+	}
+
+	ts := Targets{&listenbrainz{Token: config.ListenbrainzToken}}
+	ps := Players{&mpdSession}
+
+	var wg sync.WaitGroup
+
+	// For each player...
+	for _, p := range ps {
+		// And for each target...
+		for _, t := range ts {
+			wg.Add(1)
+
+			// ...create a function that will watch the player and submit it to the target
+			go func(p Player, t Target) {
+				defer wg.Done()
+
+				playerLog, errs := p.Subscribe()
+				for {
+					select {
+					// For each track change, create the timer that will handle submitting listens.
+					case cur := <-playerLog:
+						go func(p Player, t Target, track Track) {
+							// TODO: at the time of this commit, this is printing twice. Check Subscribe()
+							logger.Printf("[PLAYER]: now playing: %s by %s\n", track.Title, track.Artist)
+							t.SubmitPlayingNow(track)
+							newTimer(p, t, track)
+						}(p, t, cur)
+					case e := <-errs:
+						// player errors are bound to fill up, should the connection be lost.
+						// TODO: find a better way to deal with player error logs
+						logger.Println(e)
+					}
+				}
+			}(p, t)
+		}
+	}
+
+	wg.Wait()
 }
