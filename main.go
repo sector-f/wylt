@@ -63,14 +63,21 @@ func newLogger(path string) *log.Logger {
 }
 
 // create a timer that will return whenever the submission time is elapsed
-func newTimer(p Player, t Target, track Track) *time.Timer {
-	// TODO: whenever I deal with concurrent logging, log these errors too
-	st, _ := t.GetSubmissionTime(track.Duration)
+// TODO: use a context to only permit one timer to run at a time
+func newTimer(l *log.Logger, p Player, t Target, track Track) *time.Timer {
+	st, err := t.GetSubmissionTime(track.Duration)
+	if err != nil {
+		l.Fatalln(err)
+	}
 
-	np, _ := p.NowPlaying()
+	np, err := p.NowPlaying()
+	if err != nil {
+		l.Fatalln(err)
+	}
 
 	return time.AfterFunc(time.Duration(st)*time.Second, func() {
 		if cmp.Equal(track, np) {
+			l.Printf("[TARGET]: %s: submitting: %s by %s\n", t.Name(), track.Title, track.Artist)
 			t.SubmitListen(track)
 		}
 	})
@@ -121,7 +128,8 @@ func main() {
 							// TODO: at the time of this commit, this is printing twice. Check Subscribe()
 							logger.Printf("[PLAYER]: now playing: %s by %s\n", track.Title, track.Artist)
 							t.SubmitPlayingNow(track)
-							newTimer(p, t, track)
+							logger.Printf("[TARGET] %s: started timer for: %s by %s\n", t.Name(), track.Title, track.Artist)
+							newTimer(logger, p, t, track)
 						}(p, t, cur)
 					case e := <-errs:
 						// player errors are bound to fill up, should the connection be lost.

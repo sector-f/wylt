@@ -10,6 +10,8 @@ import (
 // Target is an interface that encodes what works as a target.
 // In this case, it can be anything that has a Publish() function that returns a http response.
 type Target interface {
+	// this prints the name of the target, for logging purposes
+	Name() string
 	// SubmitPlayingNow wraps a target's "playing now" function. (It's used in last.fm, libre.fm, and listenbrainz.)
 	SubmitPlayingNow(Track) (*http.Response, error)
 	// SubmitListen says you've listened to a track, according to a Target's parameters on what counts as a listen.
