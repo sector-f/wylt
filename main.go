@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"os"
@@ -24,7 +25,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/google/go-cmp/cmp"
 )
 
 // struct for unmarshalling the config
@@ -44,27 +44,6 @@ func newLogger(path string) *log.Logger {
 
 	mw := io.MultiWriter(os.Stdout, logfile)
 	return log.New(mw, "", log.LstdFlags)
-}
-
-// create a timer that will return whenever the submission time is elapsed
-// TODO: use a context to only permit one timer to run at a time
-func newTimer(l *log.Logger, p Player, t Target, track Track) *time.Timer {
-	st, err := t.GetSubmissionTime(track.Duration)
-	if err != nil {
-		l.Fatalln(err)
-	}
-
-	np, err := p.NowPlaying()
-	if err != nil {
-		l.Fatalln(err)
-	}
-
-	return time.AfterFunc(time.Duration(st)*time.Second, func() {
-		if cmp.Equal(track, np) {
-			l.Printf("[TARGET]: %s: submitting: %s by %s\n", t.Name(), track.Title, track.Artist)
-			t.SubmitListen(track)
-		}
-	})
 }
 
 func main() {
@@ -109,16 +88,33 @@ func main() {
 				defer wg.Done()
 
 				playerLog, errs := p.Subscribe()
+
+				var (
+					ctx        context.Context
+					cancelFunc func()
+
+					current Track
+				)
+
 				for {
 					select {
-					// For each track change, create the timer that will handle submitting listens.
-					case cur := <-playerLog:
-						go func(p Player, t Target, track Track) {
-							logger.Printf("[PLAYER]: now playing: %s by %s\n", track.Title, track.Artist)
-							t.SubmitPlayingNow(track)
-							logger.Printf("[TARGET] %s: started timer for: %s by %s\n", t.Name(), track.Title, track.Artist)
-							newTimer(logger, p, t, track)
-						}(p, t, cur)
+					case new := <-playerLog:
+						// TODO: see if there's a better way to uniquely identify tracks
+						// e.g. some sort of ID number, or maybe path on the filesystem
+						if new == current {
+							continue
+						}
+
+						if cancelFunc != nil {
+							cancelFunc()
+						}
+						ctx, cancelFunc = context.WithCancel(context.Background())
+
+						logger.Printf("[PLAYER]: now playing: %s by %s\n", new.Title, new.Artist)
+						t.SubmitPlayingNow(new)
+						go handleTrack(ctx, t, new, logger)
+
+						current = new
 					case e := <-errs:
 						// player errors are bound to fill up, should the connection be lost.
 						// TODO: find a better way to deal with player error logs
@@ -130,4 +126,25 @@ func main() {
 	}
 
 	wg.Wait()
+}
+
+func handleTrack(ctx context.Context, target Target, track Track, logger *log.Logger) {
+	uploadDuration, err := target.GetSubmissionTime(track.Duration)
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+
+	timer := time.NewTimer(uploadDuration)
+	select {
+	case <-timer.C:
+		logger.Printf("[TARGET]: %s: submitting: %s by %s\n", target.Name(), track.Title, track.Artist)
+
+		_, err = target.SubmitListen(track)
+		if err != nil {
+			logger.Println(err)
+		}
+	case <-ctx.Done():
+		timer.Stop()
+	}
 }
